@@ -65,6 +65,13 @@ export function validateChannelName(name: string): void {
   }
 }
 
+export function decodeJwtPayload(token: string): Record<string, unknown> {
+  const parts = token.split(".");
+  if (parts.length !== 3) throw new Error("Invalid token format");
+  const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  return JSON.parse(atob(payload));
+}
+
 export function parseChannelType(name: string): ChannelType {
   if (name.startsWith("presence-")) return "presence";
   if (name.startsWith("private-")) return "private";

@@ -120,7 +120,9 @@ const emitwave = new EmitWave({
 
 Your endpoint receives `POST` with `{ type: "connect" | "subscribe", subscriberId?, channel? }` and must return:
 - For `connect`: `{ token: "jwt..." }`
-- For `subscribe`: `{ token: "jwt...", channel: "internal-channel-name" }`
+- For `subscribe`: `{ token: "jwt..." }`
+
+The SDK automatically extracts the internal channel name from the JWT payload.
 
 ## TypeScript
 

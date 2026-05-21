@@ -27,14 +27,18 @@ describe("AuthManager", () => {
   });
 
   it("fetches subscribe token via HTTP client", async () => {
+    // Create a fake JWT with a channel claim in the payload
+    const payload = btoa(JSON.stringify({ channel: "org:room:123" }));
+    const fakeJwt = `header.${payload}.signature`;
+
     const httpClient = {
-      post: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:room:123" }),
+      post: vi.fn().mockResolvedValue({ token: fakeJwt }),
     } as unknown as HttpClient;
 
     const auth = new AuthManager({ httpClient, logger });
     const result = await auth.getSubscribeToken("room:123", "user_1");
 
-    expect(result).toStrictEqual({ token: "sub_jwt", channel: "org:room:123" });
+    expect(result).toStrictEqual({ token: fakeJwt, channel: "org:room:123" });
     expect(httpClient.post).toHaveBeenCalledWith(
       "/v1/realtime/tokens/subscribe",
       { channel: "room:123", subscriberId: "user_1" },

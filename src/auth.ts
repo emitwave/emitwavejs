@@ -1,5 +1,6 @@
 import { HttpClient } from "./http.js";
 import type { Logger } from "./utils.js";
+import { decodeJwtPayload } from "./utils.js";
 
 interface TokenResponse {
   token: string;
@@ -50,19 +51,24 @@ export class AuthManager {
   ): Promise<SubscribeTokenResponse> {
     this.logger.log("Fetching subscribe token for", channel);
 
+    let token: string;
+
     if (this.authEndpoint) {
-      const token = await this.fetchFromAuthEndpoint("subscribe", {
+      token = await this.fetchFromAuthEndpoint("subscribe", {
         channel,
         subscriberId,
       });
-      return { token, channel };
+    } else {
+      const result = await this.httpClient.post<TokenResponse>(
+        "/v1/realtime/tokens/subscribe",
+        { channel, subscriberId },
+      );
+      token = result.token;
     }
 
-    const result = await this.httpClient.post<SubscribeTokenResponse>(
-      "/v1/realtime/tokens/subscribe",
-      { channel, subscriberId },
-    );
-    return result;
+    const claims = decodeJwtPayload(token);
+    const internalChannel = claims.channel as string;
+    return { token, channel: internalChannel };
   }
 
   private async fetchFromAuthEndpoint(
