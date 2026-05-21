@@ -47,21 +47,21 @@ export class AuthManager {
 
   async getSubscribeToken(
     channel: string,
-    subscriberId: string,
+    subscriberId: string = "",
   ): Promise<SubscribeTokenResponse> {
     this.logger.log("Fetching subscribe token for", channel);
 
     let token: string;
 
+    const body: Record<string, string> = { channel };
+    if (subscriberId) body.subscriberId = subscriberId;
+
     if (this.authEndpoint) {
-      token = await this.fetchFromAuthEndpoint("subscribe", {
-        channel,
-        subscriberId,
-      });
+      token = await this.fetchFromAuthEndpoint("subscribe", body);
     } else {
       const result = await this.httpClient.post<TokenResponse>(
         "/v1/realtime/tokens/subscribe",
-        { channel, subscriberId },
+        body,
       );
       token = result.token;
     }

@@ -140,13 +140,7 @@ export class RealtimeManager {
 
     const type = parseChannelType(name);
 
-    if (type === "public") {
-      const existing = this.client.getSubscription(name);
-      if (existing) return existing;
-      return this.client.newSubscription(name, {});
-    }
-
-    if (!this.subscriberId) {
+    if (type !== "public" && !this.subscriberId) {
       throw new Error(
         "subscriberId is required for private and presence channels. Provide it in connect() options.",
       );
@@ -155,7 +149,7 @@ export class RealtimeManager {
     const { token, channel: internalName } =
       await this.config.authManager.getSubscribeToken(
         name,
-        this.subscriberId,
+        this.subscriberId || "",
       );
 
     this.internalNames.set(name, internalName);
@@ -168,7 +162,7 @@ export class RealtimeManager {
       getToken: async () => {
         const result = await this.config.authManager.getSubscribeToken(
           name,
-          this.subscriberId!,
+          this.subscriberId || "",
         );
         return result.token;
       },

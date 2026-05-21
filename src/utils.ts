@@ -68,7 +68,9 @@ export function validateChannelName(name: string): void {
 export function decodeJwtPayload(token: string): Record<string, unknown> {
   const parts = token.split(".");
   if (parts.length !== 3) throw new Error("Invalid token format");
-  const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  let payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const pad = payload.length % 4;
+  if (pad) payload += "=".repeat(4 - pad);
   return JSON.parse(atob(payload));
 }
 
