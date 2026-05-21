@@ -33,7 +33,7 @@ describe("RealtimeManager", () => {
     vi.clearAllMocks();
     authManager = {
       getConnectToken: vi.fn().mockResolvedValue("connect_jwt"),
-      getSubscribeToken: vi.fn().mockResolvedValue("sub_jwt"),
+      getSubscribeToken: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:room" }),
     } as unknown as AuthManager;
   });
 
@@ -84,8 +84,8 @@ describe("RealtimeManager", () => {
     });
 
     await manager.connect("user_1");
-    const ch1 = manager.channel("room-1");
-    const ch2 = manager.channel("room-1");
+    const ch1 = await manager.channel("room-1");
+    const ch2 = await manager.channel("room-1");
 
     expect(ch1).toBe(ch2);
     expect(mockClient.newSubscription).toHaveBeenCalledTimes(1);
@@ -99,18 +99,18 @@ describe("RealtimeManager", () => {
     });
 
     await manager.connect("user_1");
-    const ch = manager.presence("chat-room");
+    const ch = await manager.presence("chat-room");
     expect(ch).toBeDefined();
     expect(ch.name).toBe("chat-room");
   });
 
-  it("throws if channel called before connect", () => {
+  it("throws if channel called before connect", async () => {
     const manager = new RealtimeManager({
       realtimeUrl: "wss://rt.example.com/ws",
       authManager,
       logger,
     });
 
-    expect(() => manager.channel("test")).toThrow("Not connected");
+    await expect(manager.channel("test")).rejects.toThrow("Not connected");
   });
 });

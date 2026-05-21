@@ -13,28 +13,27 @@ npm install @emitwave/emitwavejs
 ```ts
 import { EmitWave } from "@emitwave/emitwavejs";
 
-// Pattern 1: subscriberId at init
+// Pattern 1: Authenticated (private/presence channels)
 const emitwave = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
-  subscriberId: "user_123",
 });
-await emitwave.connect();
+await emitwave.connect({ subscriberId: "user_123" });
 
-// Pattern 2: subscriberId at connect time
+// Pattern 2: Anonymous (public channels only)
 const emitwave2 = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
 });
-await emitwave2.connect({ subscriberId: "user_123" });
+await emitwave2.connect(); // no subscriberId needed
 
-// Subscribe to a private channel (requires auth token)
-const channel = emitwave.channel("private-room-123");
+// Subscribe to a private channel (requires auth token + subscriberId)
+const channel = await emitwave.channel("private-room-123");
 channel.on("message", (data) => console.log(data));
 channel.subscribe();
 
 // Subscribe to a public channel (no auth token needed)
-const news = emitwave.channel("news");
+const news = await emitwave.channel("news");
 news.on("message", (data) => console.log(data));
 news.subscribe();
 
@@ -54,15 +53,15 @@ Channels are categorized by name prefix:
 
 ```ts
 // Public channel — no subscribe token requested
-const news = emitwave.channel("news");
+const news = await emitwave.channel("news");
 
-// Private channel — subscribe token auto-requested
-const inbox = emitwave.channel("private-user-123");
+// Private channel — subscribe token auto-requested (requires subscriberId)
+const inbox = await emitwave.channel("private-user-123");
 
 // Presence channel — subscribe token + presence tracking
 // Both forms return a PresenceChannel:
-const room = emitwave.channel("presence-room");
-const room2 = emitwave.presence("presence-room");
+const room = await emitwave.channel("presence-room");
+const room2 = await emitwave.presence("presence-room");
 ```
 
 ## Channel Names
@@ -79,7 +78,7 @@ Invalid names throw an error immediately on the client, before any server reques
 ## Presence
 
 ```ts
-const presence = emitwave.presence("presence-chat-room");
+const presence = await emitwave.presence("presence-chat-room");
 presence.on("join", (info) => console.log("joined:", info));
 presence.on("leave", (info) => console.log("left:", info));
 presence.subscribe();
@@ -119,7 +118,9 @@ const emitwave = new EmitWave({
 });
 ```
 
-Your endpoint receives `POST` with `{ type: "connect" | "subscribe", subscriberId, channel? }` and must return `{ token: "jwt..." }`.
+Your endpoint receives `POST` with `{ type: "connect" | "subscribe", subscriberId?, channel? }` and must return:
+- For `connect`: `{ token: "jwt..." }`
+- For `subscribe`: `{ token: "jwt...", channel: "internal-channel-name" }`
 
 ## TypeScript
 

@@ -55,11 +55,6 @@ export class EmitWave {
 
   async connect(options?: ConnectOptions): Promise<void> {
     const subscriberId = options?.subscriberId ?? this.subscriberId;
-    if (!subscriberId) {
-      throw new Error(
-        "subscriberId is required — provide it in the constructor config or connect() options",
-      );
-    }
     await this.realtimeManager.connect(subscriberId);
   }
 
@@ -71,11 +66,11 @@ export class EmitWave {
     return this.realtimeManager.isConnected();
   }
 
-  channel(name: string): Channel | PresenceChannel {
+  async channel(name: string): Promise<Channel | PresenceChannel> {
     return this.realtimeManager.channel(name);
   }
 
-  presence(name: string): PresenceChannel {
+  async presence(name: string): Promise<PresenceChannel> {
     return this.realtimeManager.presence(name);
   }
 

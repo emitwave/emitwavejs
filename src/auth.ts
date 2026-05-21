@@ -5,6 +5,11 @@ interface TokenResponse {
   token: string;
 }
 
+interface SubscribeTokenResponse {
+  token: string;
+  channel: string;
+}
+
 export interface AuthManagerConfig {
   httpClient: HttpClient;
   authEndpoint?: string;
@@ -22,16 +27,19 @@ export class AuthManager {
     this.logger = config.logger;
   }
 
-  async getConnectToken(subscriberId: string): Promise<string> {
-    this.logger.log("Fetching connect token for", subscriberId);
+  async getConnectToken(subscriberId?: string): Promise<string> {
+    this.logger.log("Fetching connect token", subscriberId ? `for ${subscriberId}` : "(anonymous)");
 
     if (this.authEndpoint) {
-      return this.fetchFromAuthEndpoint("connect", { subscriberId });
+      return this.fetchFromAuthEndpoint("connect", subscriberId ? { subscriberId } : {});
     }
+
+    const body: Record<string, string> = {};
+    if (subscriberId) body.subscriberId = subscriberId;
 
     const result = await this.httpClient.post<TokenResponse>(
       "/v1/realtime/tokens/connect",
-      { subscriberId },
+      body,
     );
     return result.token;
   }
@@ -39,21 +47,22 @@ export class AuthManager {
   async getSubscribeToken(
     channel: string,
     subscriberId: string,
-  ): Promise<string> {
+  ): Promise<SubscribeTokenResponse> {
     this.logger.log("Fetching subscribe token for", channel);
 
     if (this.authEndpoint) {
-      return this.fetchFromAuthEndpoint("subscribe", {
+      const token = await this.fetchFromAuthEndpoint("subscribe", {
         channel,
         subscriberId,
       });
+      return { token, channel };
     }
 
-    const result = await this.httpClient.post<TokenResponse>(
+    const result = await this.httpClient.post<SubscribeTokenResponse>(
       "/v1/realtime/tokens/subscribe",
       { channel, subscriberId },
     );
-    return result.token;
+    return result;
   }
 
   private async fetchFromAuthEndpoint(

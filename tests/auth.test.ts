@@ -28,13 +28,13 @@ describe("AuthManager", () => {
 
   it("fetches subscribe token via HTTP client", async () => {
     const httpClient = {
-      post: vi.fn().mockResolvedValue({ token: "sub_jwt" }),
+      post: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:room:123" }),
     } as unknown as HttpClient;
 
     const auth = new AuthManager({ httpClient, logger });
-    const token = await auth.getSubscribeToken("room:123", "user_1");
+    const result = await auth.getSubscribeToken("room:123", "user_1");
 
-    expect(token).toBe("sub_jwt");
+    expect(result).toStrictEqual({ token: "sub_jwt", channel: "org:room:123" });
     expect(httpClient.post).toHaveBeenCalledWith(
       "/v1/realtime/tokens/subscribe",
       { channel: "room:123", subscriberId: "user_1" },

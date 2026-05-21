@@ -17,6 +17,7 @@ export class RealtimeManager {
   private client: Centrifuge | null = null;
   private channels = new Map<string, Channel>();
   private presenceChannels = new Map<string, PresenceChannel>();
+  private internalNames = new Map<string, string>();
   private subscriberId: string | null = null;
   private config: RealtimeManagerConfig;
   private _state: ConnectionState = "disconnected";
@@ -31,13 +32,13 @@ export class RealtimeManager {
     return this._state;
   }
 
-  async connect(subscriberId: string): Promise<void> {
+  async connect(subscriberId?: string): Promise<void> {
     if (this.client) {
       this.config.logger.warn("Already connected, disconnecting first");
       this.disconnect();
     }
 
-    this.subscriberId = subscriberId;
+    this.subscriberId = subscriberId ?? null;
     this._state = "connecting";
     this.emitter.emit("connecting");
 
@@ -46,7 +47,7 @@ export class RealtimeManager {
     this.client = new Centrifuge(this.config.realtimeUrl, {
       token,
       getToken: () =>
-        this.config.authManager.getConnectToken(this.subscriberId!),
+        this.config.authManager.getConnectToken(this.subscriberId ?? undefined),
     });
 
     this.client.on("connected", () => {
@@ -73,12 +74,18 @@ export class RealtimeManager {
     if (!this.client) return;
 
     for (const [name] of this.channels) {
-      this.client.removeSubscription(
-        this.client.getSubscription(name) ?? undefined as any,
-      );
+      const internalName = this.internalNames.get(name) ?? name;
+      const sub = this.client.getSubscription(internalName);
+      if (sub) this.client.removeSubscription(sub);
+    }
+    for (const [name] of this.presenceChannels) {
+      const internalName = this.internalNames.get(name) ?? name;
+      const sub = this.client.getSubscription(internalName);
+      if (sub) this.client.removeSubscription(sub);
     }
     this.channels.clear();
     this.presenceChannels.clear();
+    this.internalNames.clear();
 
     this.client.disconnect();
     this.client = null;
@@ -89,7 +96,7 @@ export class RealtimeManager {
     return this._state === "connected";
   }
 
-  channel(name: string): Channel | PresenceChannel {
+  async channel(name: string): Promise<Channel | PresenceChannel> {
     validateChannelName(name);
     const type = parseChannelType(name);
 
@@ -101,20 +108,20 @@ export class RealtimeManager {
       return this.channels.get(name)!;
     }
 
-    const subscription = this.createSubscription(name);
+    const subscription = await this.createSubscription(name);
     const channel = new Channel(name, subscription, this.config.logger);
     this.channels.set(name, channel);
     return channel;
   }
 
-  presence(name: string): PresenceChannel {
+  async presence(name: string): Promise<PresenceChannel> {
     validateChannelName(name);
 
     if (this.presenceChannels.has(name)) {
       return this.presenceChannels.get(name)!;
     }
 
-    const subscription = this.createSubscription(name);
+    const subscription = await this.createSubscription(name);
     const channel = new PresenceChannel(
       name,
       subscription,
@@ -124,28 +131,47 @@ export class RealtimeManager {
     return channel;
   }
 
-  private createSubscription(name: string) {
+  private async createSubscription(name: string) {
     if (!this.client) {
       throw new Error(
         "Not connected. Call connect() before creating channels.",
       );
     }
 
-    const existing = this.client.getSubscription(name);
-    if (existing) return existing;
-
     const type = parseChannelType(name);
 
     if (type === "public") {
+      const existing = this.client.getSubscription(name);
+      if (existing) return existing;
       return this.client.newSubscription(name, {});
     }
 
-    return this.client.newSubscription(name, {
-      getToken: () =>
-        this.config.authManager.getSubscribeToken(
+    if (!this.subscriberId) {
+      throw new Error(
+        "subscriberId is required for private and presence channels. Provide it in connect() options.",
+      );
+    }
+
+    const { token, channel: internalName } =
+      await this.config.authManager.getSubscribeToken(
+        name,
+        this.subscriberId,
+      );
+
+    this.internalNames.set(name, internalName);
+
+    const existing = this.client.getSubscription(internalName);
+    if (existing) return existing;
+
+    return this.client.newSubscription(internalName, {
+      token,
+      getToken: async () => {
+        const result = await this.config.authManager.getSubscribeToken(
           name,
           this.subscriberId!,
-        ),
+        );
+        return result.token;
+      },
     });
   }
 }
