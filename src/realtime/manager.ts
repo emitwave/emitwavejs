@@ -27,7 +27,7 @@ export class RealtimeManager {
   private channels = new Map<string, Channel>();
   private presenceChannels = new Map<string, PresenceChannel>();
   private internalNames = new Map<string, string>();
-  private subscriberId: string | null = null;
+  private subscriberExternalId: string | null = null;
   private config: RealtimeManagerConfig;
   private _state: ConnectionState = "disconnected";
 
@@ -41,22 +41,22 @@ export class RealtimeManager {
     return this._state;
   }
 
-  async connect(subscriberId?: string): Promise<void> {
+  async connect(subscriberExternalId?: string): Promise<void> {
     if (this.client) {
       this.config.logger.warn("Already connected, disconnecting first");
       this.disconnect();
     }
 
-    this.subscriberId = subscriberId ?? null;
+    this.subscriberExternalId = subscriberExternalId ?? null;
     this._state = "connecting";
     this.emitter.emit("connecting");
 
-    const token = await this.config.authManager.getConnectToken(subscriberId);
+    const token = await this.config.authManager.getConnectToken(subscriberExternalId);
 
     this.client = new Centrifuge(this.config.realtimeUrl, {
       token,
       getToken: () =>
-        this.config.authManager.getConnectToken(this.subscriberId ?? undefined),
+        this.config.authManager.getConnectToken(this.subscriberExternalId ?? undefined),
     });
 
     this.client.on("connected", () => {
@@ -206,12 +206,20 @@ export class RealtimeManager {
         "subscriberAccessToken is required for protected channels. Provide it in config, connect() options, or setSubscriberTokens().",
       );
     }
+    if (isProtected && !this.subscriberExternalId) {
+      throw new Error(
+        "subscriberExternalId is required for protected channels. Provide it in config or connect() options.",
+      );
+    }
 
     const authResult: ProtectedSubscribeTokenResponse = isProtected
-      ? await this.config.authManager.getProtectedSubscribeToken(name)
+      ? await this.config.authManager.getProtectedSubscribeToken(
+          name,
+          this.subscriberExternalId || "",
+        )
       : await this.config.authManager.getSubscribeToken(
           name,
-          this.subscriberId || "",
+          this.subscriberExternalId || "",
         );
     const { token, channel: internalName } = authResult;
 
@@ -227,10 +235,13 @@ export class RealtimeManager {
       token,
       getToken: async () => {
         const result = isProtected
-          ? await this.config.authManager.getProtectedSubscribeToken(name)
+          ? await this.config.authManager.getProtectedSubscribeToken(
+              name,
+              this.subscriberExternalId || "",
+            )
           : await this.config.authManager.getSubscribeToken(
               name,
-              this.subscriberId || "",
+              this.subscriberExternalId || "",
             );
         return result.token;
       },

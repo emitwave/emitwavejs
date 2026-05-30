@@ -17,6 +17,7 @@ import { EmitWave } from "@emitwave/emitwavejs";
 const emitwave = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
+  subscriberExternalId: "user_123",
   subscriberAccessToken: "subscriber_access_jwt",
   subscriberRefreshToken: "ewr_refresh_token",
 });
@@ -27,7 +28,7 @@ const emitwave2 = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
 });
-await emitwave2.connect(); // no subscriberId needed
+await emitwave2.connect(); // no subscriberExternalId needed
 
 // Subscribe to a private channel (requires subscriber access token)
 const channel = await emitwave.private("user.user_123");
@@ -143,22 +144,26 @@ Customer backends should issue subscriber tokens after authenticating the user i
 your app:
 
 ```ts
-// Server-side only, using a secret API key.
-const serverEmitWave = new EmitWave({
-  appId: "app_123",
-  publicKey: "ew_abc123_secret",
+// Server-side only. Use your EmitWave secret API key from your backend.
+const response = await fetch("https://api.emitwave.com/v1/subscribers/user_123/token", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.EMITWAVE_SECRET_KEY}`,
+  },
 });
 
-const tokens = await serverEmitWave.issueSubscriberToken("user_123");
+const tokens = await response.json();
 ```
 
 Return `tokens.accessToken` and `tokens.refreshToken` to your frontend. The
-browser SDK can then use them for private, presence, and encrypted private channels:
+browser SDK can then use them with the subscriber external ID for private,
+presence, and encrypted private channels:
 
 ```ts
 const emitwave = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
+  subscriberExternalId: "user_123",
   subscriberAccessToken: tokens.accessToken,
   subscriberRefreshToken: tokens.refreshToken,
 });
@@ -194,6 +199,7 @@ emitwave.on("error", (err) => console.error(err));
 const emitwave = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
+  subscriberExternalId: "user_123",
   subscriberAccessToken: "subscriber_access_jwt",
   subscriberRefreshToken: "ewr_refresh_token",
   apiUrl: "https://api.emitwave.com",       // default
@@ -214,7 +220,7 @@ const emitwave = new EmitWave({
 });
 ```
 
-Your endpoint receives `POST` with `{ type: "connect" | "subscribe" | "protectedSubscribe", subscriberId?, channel? }` and must return:
+Your endpoint receives `POST` with `{ type: "connect" | "subscribe" | "protectedSubscribe", subscriberExternalId?, channel? }` and must return:
 - For `connect`: `{ token: "jwt..." }`
 - For `subscribe`: `{ token: "jwt..." }`
 - For `protectedSubscribe`: `{ auth: "jwt...", channel_data?: "...", shared_secret?: "..." }`

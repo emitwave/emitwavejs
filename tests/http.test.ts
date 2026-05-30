@@ -27,7 +27,7 @@ describe("HttpClient", () => {
 
     const result = await client.post<{ token: string }>(
       "/v1/realtime/tokens/connect",
-      { subscriberId: "user_1" },
+      { externalId: "user_1" },
     );
 
     expect(result).toEqual({ token: "jwt_123" });
@@ -40,7 +40,7 @@ describe("HttpClient", () => {
           Authorization: "Bearer ew_pk_test",
           "X-Emitwave-SDK": "js/0.1.0",
         },
-        body: JSON.stringify({ subscriber_id: "user_1" }),
+        body: JSON.stringify({ external_id: "user_1" }),
       }),
     );
   });

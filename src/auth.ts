@@ -64,18 +64,6 @@ export class AuthManager {
     return Boolean(this.subscriberAccessToken || this.subscriberRefreshToken);
   }
 
-  async issueSubscriberToken(subscriberId: string): Promise<SubscriberTokenPair> {
-    const result = await this.httpClient.post<SubscriberTokenPair>(
-      `/v1/subscribers/${encodeURIComponent(subscriberId)}/token`,
-      {},
-    );
-    this.setSubscriberTokens({
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    });
-    return result;
-  }
-
   async refreshSubscriberToken(refreshToken = this.subscriberRefreshToken): Promise<SubscriberTokenPair> {
     if (!refreshToken) {
       throw new Error("refreshToken is required to refresh subscriber tokens");
@@ -107,15 +95,15 @@ export class AuthManager {
     }
   }
 
-  async getConnectToken(subscriberId?: string): Promise<string> {
-    this.logger.log("Fetching connect token", subscriberId ? `for ${subscriberId}` : "(anonymous)");
+  async getConnectToken(subscriberExternalId?: string): Promise<string> {
+    this.logger.log("Fetching connect token", subscriberExternalId ? `for ${subscriberExternalId}` : "(anonymous)");
 
     if (this.authEndpoint) {
-      return this.fetchFromAuthEndpoint("connect", subscriberId ? { subscriberId } : {});
+      return this.fetchFromAuthEndpoint("connect", subscriberExternalId ? { subscriberExternalId } : {});
     }
 
     const body: Record<string, string> = {};
-    if (subscriberId) body.subscriberId = subscriberId;
+    if (subscriberExternalId) body.externalId = subscriberExternalId;
 
     const result = await this.httpClient.post<TokenResponse>(
       "/v1/realtime/tokens/connect",
@@ -126,15 +114,18 @@ export class AuthManager {
 
   async getSubscribeToken(
     channel: string,
-    subscriberId: string = "",
+    subscriberExternalId: string = "",
   ): Promise<SubscribeTokenResponse> {
     this.logger.log("Fetching subscribe token for", channel);
 
     const body: Record<string, string> = { channel };
-    if (subscriberId) body.subscriberId = subscriberId;
+    if (subscriberExternalId) body.subscriberId = subscriberExternalId;
 
     if (this.authEndpoint) {
-      const token = await this.fetchFromAuthEndpoint("subscribe", body);
+      const token = await this.fetchFromAuthEndpoint(
+        "subscribe",
+        subscriberExternalId ? { channel, subscriberExternalId } : { channel },
+      );
       return this.subscribeTokenResult(token);
     }
 
@@ -145,14 +136,20 @@ export class AuthManager {
     return this.subscribeTokenResult(result.token);
   }
 
-  async getPrivateSubscribeToken(channel: string): Promise<ProtectedSubscribeTokenResponse> {
+  async getPrivateSubscribeToken(
+    channel: string,
+    subscriberExternalId = "",
+  ): Promise<ProtectedSubscribeTokenResponse> {
     this.logger.log("Fetching private subscribe token for", channel);
-    return this.getProtectedSubscribeToken(channel);
+    return this.getProtectedSubscribeToken(channel, subscriberExternalId);
   }
 
-  async getProtectedSubscribeToken(channel: string): Promise<ProtectedSubscribeTokenResponse> {
+  async getProtectedSubscribeToken(
+    channel: string,
+    subscriberExternalId = "",
+  ): Promise<ProtectedSubscribeTokenResponse> {
     this.logger.log("Fetching protected subscribe token for", channel);
-    const result = await this.getProtectedChannelAuth(channel);
+    const result = await this.getProtectedChannelAuth(channel, subscriberExternalId);
     const tokenResult = this.subscribeTokenResult(result.auth);
     const protectedResult: ProtectedSubscribeTokenResponse = { ...tokenResult };
     const channelData = result.channel_data ?? result.channelData;
@@ -168,7 +165,10 @@ export class AuthManager {
     return { token, channel: internalChannel };
   }
 
-  private async getProtectedChannelAuth(channel: string): Promise<BroadcastingAuthResponse> {
+  private async getProtectedChannelAuth(
+    channel: string,
+    subscriberExternalId = "",
+  ): Promise<BroadcastingAuthResponse> {
     if (!this.subscriberAccessToken && this.subscriberRefreshToken) {
       await this.refreshSubscriberToken();
     }
@@ -179,7 +179,7 @@ export class AuthManager {
     }
 
     if (this.authEndpoint) {
-      return this.fetchProtectedFromAuthEndpoint(channel);
+      return this.fetchProtectedFromAuthEndpoint(channel, subscriberExternalId);
     }
 
     return this.httpClient.postWithBearer<BroadcastingAuthResponse>(
@@ -211,11 +211,15 @@ export class AuthManager {
 
   private async fetchProtectedFromAuthEndpoint(
     channel: string,
+    subscriberExternalId = "",
   ): Promise<BroadcastingAuthResponse> {
+    const body: Record<string, string> = { type: "protectedSubscribe", channel };
+    if (subscriberExternalId) body.subscriberExternalId = subscriberExternalId;
+
     const response = await fetch(this.authEndpoint!, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "protectedSubscribe", channel }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

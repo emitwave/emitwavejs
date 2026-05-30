@@ -19,7 +19,7 @@ const DEFAULT_REALTIME_URL =
 export class EmitWave {
   private realtimeManager: RealtimeManager;
   private authManager: AuthManager;
-  private subscriberId?: string;
+  private subscriberExternalId?: string;
 
   constructor(config: EmitWaveConfig) {
     if (!config.appId) throw new Error("appId is required");
@@ -50,7 +50,7 @@ export class EmitWave {
     });
     this.authManager = authManager;
 
-    this.subscriberId = config.subscriberId;
+    this.subscriberExternalId = config.subscriberExternalId;
 
     this.realtimeManager = new RealtimeManager({
       realtimeUrl,
@@ -66,8 +66,8 @@ export class EmitWave {
         refreshToken: options.subscriberRefreshToken,
       });
     }
-    const subscriberId = options?.subscriberId ?? this.subscriberId;
-    await this.realtimeManager.connect(subscriberId);
+    const subscriberExternalId = options?.subscriberExternalId ?? this.subscriberExternalId;
+    await this.realtimeManager.connect(subscriberExternalId);
   }
 
   setSubscriberTokens(tokens: {
@@ -75,10 +75,6 @@ export class EmitWave {
     refreshToken?: string;
   }): void {
     this.authManager.setSubscriberTokens(tokens);
-  }
-
-  issueSubscriberToken(subscriberId: string): Promise<SubscriberTokenPair> {
-    return this.authManager.issueSubscriberToken(subscriberId);
   }
 
   refreshSubscriberToken(refreshToken?: string): Promise<SubscriberTokenPair> {

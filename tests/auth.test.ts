@@ -22,7 +22,7 @@ describe("AuthManager", () => {
     expect(token).toBe("connect_jwt");
     expect(httpClient.post).toHaveBeenCalledWith(
       "/v1/realtime/tokens/connect",
-      { subscriberId: "user_1" },
+      { externalId: "user_1" },
     );
   });
 
@@ -137,7 +137,7 @@ describe("AuthManager", () => {
       logger,
       subscriberRefreshToken: "old_refresh",
     });
-    const result = await auth.getProtectedSubscribeToken("private-user.user_1");
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1");
 
     expect(result.token).toBe(fakeJwt);
     expect(httpClient.postNoAuth).toHaveBeenCalledWith(
@@ -176,27 +176,6 @@ describe("AuthManager", () => {
     );
   });
 
-  it("issues subscriber token via HTTP client", async () => {
-    const httpClient = {
-      post: vi.fn().mockResolvedValue({
-        accessToken: "access",
-        refreshToken: "refresh",
-        tokenType: "Bearer",
-        expiresIn: 3600,
-        refreshExpiresIn: 2592000,
-      }),
-    } as unknown as HttpClient;
-
-    const auth = new AuthManager({ httpClient, logger });
-    const result = await auth.issueSubscriberToken("user_1");
-
-    expect(result.refreshToken).toBe("refresh");
-    expect(httpClient.post).toHaveBeenCalledWith(
-      "/v1/subscribers/user_1/token",
-      {},
-    );
-  });
-
   it("uses authEndpoint when provided", async () => {
     const httpClient = {
       post: vi.fn(),
@@ -221,7 +200,38 @@ describe("AuthManager", () => {
       "https://my-backend.com/auth",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ type: "connect", subscriberId: "user_1" }),
+        body: JSON.stringify({ type: "connect", subscriberExternalId: "user_1" }),
+      }),
+    );
+  });
+
+  it("uses subscriberExternalId for authEndpoint subscribe token requests", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.news" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      post: vi.fn(),
+    } as unknown as HttpClient;
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ token: fakeJwt }),
+    });
+
+    const auth = new AuthManager({
+      httpClient,
+      authEndpoint: "https://my-backend.com/auth",
+      logger,
+    });
+
+    const result = await auth.getSubscribeToken("news", "user_1");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(httpClient.post).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://my-backend.com/auth",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ type: "subscribe", channel: "news", subscriberExternalId: "user_1" }),
       }),
     );
   });
@@ -245,14 +255,18 @@ describe("AuthManager", () => {
       subscriberAccessToken: "subscriber_access_jwt",
     });
 
-    const result = await auth.getProtectedSubscribeToken("private-user.user_1");
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1");
 
     expect(result.token).toBe(fakeJwt);
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "https://my-backend.com/auth",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ type: "protectedSubscribe", channel: "private-user.user_1" }),
+        body: JSON.stringify({
+          type: "protectedSubscribe",
+          channel: "private-user.user_1",
+          subscriberExternalId: "user_1",
+        }),
       }),
     );
   });

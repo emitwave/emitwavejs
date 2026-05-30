@@ -1,7 +1,7 @@
 export interface EmitWaveConfig {
   appId: string;
   publicKey: string;
-  subscriberId?: string;
+  subscriberExternalId?: string;
   subscriberAccessToken?: string;
   subscriberRefreshToken?: string;
   apiUrl?: string;
@@ -54,7 +54,7 @@ export type EmitWaveEvents = {
 };
 
 export interface ConnectOptions {
-  subscriberId?: string;
+  subscriberExternalId?: string;
   subscriberAccessToken?: string;
   subscriberRefreshToken?: string;
 }

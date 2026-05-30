@@ -104,7 +104,7 @@ describe("RealtimeManager", () => {
     await manager.connect("user_1");
     await manager.presence("company.acme");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-company.acme");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-company.acme", "user_1");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -135,7 +135,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await manager.connect("user_1");
 
     await expect(manager.private("user.user_1")).rejects.toThrow(
       "subscriberAccessToken is required",
@@ -149,10 +149,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await manager.connect("user_1");
     await manager.private("user.user_1");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-user.user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-user.user_1", "user_1");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -166,10 +166,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await manager.connect("user_1");
     await manager.private("company.acme");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-company.acme");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-company.acme", "user_1");
   });
 
   it("routes encrypted private channels through protected auth", async () => {
@@ -191,10 +191,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await manager.connect("user_1");
     await manager.encryptedPrivate("user.user_1");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-encrypted-user.user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-encrypted-user.user_1", "user_1");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:encrypted",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -218,10 +218,24 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await manager.connect("user_1");
 
     await expect(manager.encryptedPrivate("user.user_1")).rejects.toThrow(
       "shared_secret is required",
+    );
+  });
+
+  it("requires subscriberExternalId for protected channels", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    await manager.connect();
+
+    await expect(manager.private("user.user_1")).rejects.toThrow(
+      "subscriberExternalId is required",
     );
   });
 

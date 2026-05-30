@@ -43,25 +43,25 @@ describe("EmitWave", () => {
     expect(ew.isConnected()).toBe(false);
   });
 
-  it("accepts subscriberId in config", () => {
+  it("accepts subscriberExternalId in config", () => {
     const ew = new EmitWave({
       appId: "app_123",
       publicKey: "ew_pk_xxx",
-      subscriberId: "user_123",
+      subscriberExternalId: "user_123",
     });
     expect(ew).toBeDefined();
   });
 
-  it("throws if subscriberId is not provided anywhere", async () => {
+  it("throws if subscriberExternalId is not provided anywhere", async () => {
     const ew = new EmitWave({
       appId: "app_123",
       publicKey: "ew_pk_xxx",
     });
-    // connect() without subscriberId will attempt to fetch a token and fail
+    // connect() without subscriberExternalId will attempt to fetch a token and fail
     await expect(ew.connect()).rejects.toThrow();
   });
 
-  it("throws if connect() called with empty options and no config subscriberId", async () => {
+  it("throws if connect() called with empty options and no config subscriberExternalId", async () => {
     const ew = new EmitWave({
       appId: "app_123",
       publicKey: "ew_pk_xxx",
