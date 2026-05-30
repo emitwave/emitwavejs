@@ -102,7 +102,14 @@ describe("channel name mapping", () => {
   });
 
   it("maps presence logical names to backend channel names", () => {
+    expect(toPresenceChannelName("user.user_123")).toBe("presence-user.user_123");
     expect(toPresenceChannelName("company.acme")).toBe("presence-company.acme");
+  });
+
+  it("rejects presence prefixed input", () => {
+    expect(() => toPresenceChannelName("presence-user.user_123")).toThrow(
+      'Use presence("user.user_123")',
+    );
   });
 
   it("maps encrypted private logical names to backend channel names", () => {
@@ -121,6 +128,7 @@ describe("channel name mapping", () => {
     expect(toLogicalChannelName("private-company.acme")).toBe("company.acme");
     expect(toLogicalChannelName("private-encrypted-user.user_123")).toBe("user.user_123");
     expect(toLogicalChannelName("private-encrypted-company.acme")).toBe("company.acme");
+    expect(toLogicalChannelName("presence-user.user_123")).toBe("user.user_123");
     expect(toLogicalChannelName("presence-company.acme")).toBe("company.acme");
   });
 

@@ -70,6 +70,9 @@ const billing = await emitwave.private("company.acme");
 // Presence channel — the SDK sends presence-user.user_123 to the backend
 const presence = await emitwave.presence("user.user_123");
 
+// Company presence — the SDK sends presence-company.acme to the backend
+const companyPresence = await emitwave.presence("company.acme");
+
 // Encrypted private channel — the SDK sends private-encrypted-user.user_123 to the backend
 const secureInbox = await emitwave.encryptedPrivate("user.user_123");
 ```
@@ -121,6 +124,7 @@ Presence channels support the same event listener API plus member events:
 
 ```ts
 const presence = await emitwave.presence("company.acme");
+// The backend channel authorized by EmitWave is presence-company.acme.
 presence.listen("member.updated", (data) => console.log(data));
 presence.on("join", (member) => console.log("joined", member.userId));
 presence.on("leave", (member) => console.log("left", member.userId));

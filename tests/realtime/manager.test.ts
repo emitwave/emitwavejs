@@ -111,6 +111,23 @@ describe("RealtimeManager", () => {
     );
   });
 
+  it("routes user presence channels through protected auth", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    await manager.connect("user_1");
+    await manager.presence("user.user_1");
+
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-user.user_1", "user_1");
+    expect(mockClient.newSubscription).toHaveBeenCalledWith(
+      "org:private",
+      expect.objectContaining({ token: "sub_jwt" }),
+    );
+  });
+
   it("throws if channel called before connect", async () => {
     const manager = new RealtimeManager({
       realtimeUrl: "wss://rt.example.com/ws",
