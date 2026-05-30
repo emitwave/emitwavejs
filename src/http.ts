@@ -17,12 +17,36 @@ export class HttpClient {
   }
 
   async post<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.postWithHeaders<T>(path, body, {
+      Authorization: `Bearer ${this.apiKey}`,
+    });
+  }
+
+  async postWithBearer<T>(
+    path: string,
+    body: Record<string, unknown>,
+    token: string,
+  ): Promise<T> {
+    return this.postWithHeaders<T>(path, body, {
+      Authorization: `Bearer ${token}`,
+    });
+  }
+
+  async postNoAuth<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.postWithHeaders<T>(path, body, {});
+  }
+
+  private async postWithHeaders<T>(
+    path: string,
+    body: Record<string, unknown>,
+    headers: Record<string, string>,
+  ): Promise<T> {
     const response = await fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
         "X-Emitwave-SDK": "js/0.1.0",
+        ...headers,
       },
       body: JSON.stringify(toSnakeCase(body)),
     });

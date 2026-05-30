@@ -45,6 +45,77 @@ describe("AuthManager", () => {
     );
   });
 
+  it("authorizes private channel with subscriber access token", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn().mockResolvedValue({ auth: fakeJwt }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "subscriber_access_jwt",
+    });
+    const result = await auth.getPrivateSubscribeToken("private-user.user_1");
+
+    expect(result).toStrictEqual({
+      token: fakeJwt,
+      channel: "app:org.app.private-user.user_1",
+    });
+    expect(httpClient.postWithBearer).toHaveBeenCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { channelName: "private-user.user_1" },
+      "subscriber_access_jwt",
+    );
+  });
+
+  it("refreshes subscriber token", async () => {
+    const httpClient = {
+      postNoAuth: vi.fn().mockResolvedValue({
+        accessToken: "new_access",
+        refreshToken: "new_refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberRefreshToken: "old_refresh",
+    });
+    const result = await auth.refreshSubscriberToken();
+
+    expect(result.accessToken).toBe("new_access");
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/refresh",
+      { refreshToken: "old_refresh" },
+    );
+  });
+
+  it("issues subscriber token via HTTP client", async () => {
+    const httpClient = {
+      post: vi.fn().mockResolvedValue({
+        accessToken: "access",
+        refreshToken: "refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({ httpClient, logger });
+    const result = await auth.issueSubscriberToken("user_1");
+
+    expect(result.refreshToken).toBe("refresh");
+    expect(httpClient.post).toHaveBeenCalledWith(
+      "/v1/subscribers/user_1/token",
+      {},
+    );
+  });
+
   it("uses authEndpoint when provided", async () => {
     const httpClient = {
       post: vi.fn(),

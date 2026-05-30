@@ -2,6 +2,8 @@ export interface EmitWaveConfig {
   appId: string;
   publicKey: string;
   subscriberId?: string;
+  subscriberAccessToken?: string;
+  subscriberRefreshToken?: string;
   apiUrl?: string;
   realtimeUrl?: string;
   authEndpoint?: string;
@@ -14,6 +16,16 @@ export interface PresenceInfo {
   clientId: string;
   userId: string;
 }
+
+export interface RealtimePublicationEnvelope {
+  event: string;
+  data: unknown;
+}
+
+export type RealtimeEventCallback = (
+  data: unknown,
+  envelope: RealtimePublicationEnvelope,
+) => void;
 
 export type ChannelEvents = {
   message: (data: unknown) => void;
@@ -36,6 +48,16 @@ export type EmitWaveEvents = {
 
 export interface ConnectOptions {
   subscriberId?: string;
+  subscriberAccessToken?: string;
+  subscriberRefreshToken?: string;
+}
+
+export interface SubscriberTokenPair {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: "Bearer" | string;
+  expiresIn: number;
+  refreshExpiresIn: number;
 }
 
 export interface ApiErrorBody {

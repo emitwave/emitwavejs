@@ -5,6 +5,11 @@ import {
   toCamelCase,
   toSnakeCase,
   createLogger,
+  hasProtectedPrefix,
+  toLogicalChannelName,
+  toPresenceChannelName,
+  toPrivateChannelName,
+  validateChannelName,
 } from "../src/utils.js";
 
 describe("snakeToCamel", () => {
@@ -72,5 +77,41 @@ describe("createLogger", () => {
     logger.log("test");
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe("validateChannelName", () => {
+  it("allows dotted private channel names", () => {
+    expect(() => validateChannelName("user.user_123")).not.toThrow();
+    expect(() => validateChannelName("company.acme")).not.toThrow();
+  });
+});
+
+describe("channel name mapping", () => {
+  it("maps private logical names to backend channel names", () => {
+    expect(toPrivateChannelName("user.user_123")).toBe("private-user.user_123");
+    expect(toPrivateChannelName("company.acme")).toBe("private-company.acme");
+  });
+
+  it("rejects private prefixed input", () => {
+    expect(() => toPrivateChannelName("private-user.user_123")).toThrow(
+      'Use private("user.user_123")',
+    );
+  });
+
+  it("maps presence logical names to backend channel names", () => {
+    expect(toPresenceChannelName("company.acme")).toBe("presence-company.acme");
+  });
+
+  it("converts backend channel names to logical names", () => {
+    expect(toLogicalChannelName("private-user.user_123")).toBe("user.user_123");
+    expect(toLogicalChannelName("private-company.acme")).toBe("company.acme");
+    expect(toLogicalChannelName("presence-company.acme")).toBe("company.acme");
+  });
+
+  it("detects protected prefixes", () => {
+    expect(hasProtectedPrefix("private-user.user_123")).toBe(true);
+    expect(hasProtectedPrefix("presence-company.acme")).toBe(true);
+    expect(hasProtectedPrefix("announcements")).toBe(false);
   });
 });

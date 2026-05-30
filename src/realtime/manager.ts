@@ -2,7 +2,13 @@ import { Centrifuge } from "centrifuge";
 import type { AuthManager } from "../auth.js";
 import { TypedEmitter } from "../emitter.js";
 import type { ConnectionState, EmitWaveEvents } from "../types.js";
-import { validateChannelName, parseChannelType } from "../utils.js";
+import {
+  hasProtectedPrefix,
+  toLogicalChannelName,
+  toPresenceChannelName,
+  toPrivateChannelName,
+  validateChannelName,
+} from "../utils.js";
 import type { Logger } from "../utils.js";
 import { Channel } from "./channel.js";
 import { PresenceChannel } from "./presence.js";
@@ -98,17 +104,31 @@ export class RealtimeManager {
 
   async channel(name: string): Promise<Channel | PresenceChannel> {
     validateChannelName(name);
-    const type = parseChannelType(name);
-
-    if (type === "presence") {
-      return this.presence(name);
+    if (hasProtectedPrefix(name)) {
+      const logicalName = toLogicalChannelName(name);
+      const method = name.startsWith("presence-") ? "presence" : "private";
+      throw new Error(`This is a protected channel. Use ${method}("${logicalName}") instead of channel().`);
     }
 
     if (this.channels.has(name)) {
       return this.channels.get(name)!;
     }
 
-    const subscription = await this.createSubscription(name);
+    const subscription = await this.createSubscription(name, "public");
+    const channel = new Channel(name, subscription, this.config.logger);
+    this.channels.set(name, channel);
+    return channel;
+  }
+
+  async private(name: string): Promise<Channel> {
+    validateChannelName(name);
+    const backendName = toPrivateChannelName(name);
+
+    if (this.channels.has(name)) {
+      return this.channels.get(name)!;
+    }
+
+    const subscription = await this.createSubscription(backendName, "private", name);
     const channel = new Channel(name, subscription, this.config.logger);
     this.channels.set(name, channel);
     return channel;
@@ -116,12 +136,13 @@ export class RealtimeManager {
 
   async presence(name: string): Promise<PresenceChannel> {
     validateChannelName(name);
+    const backendName = toPresenceChannelName(name);
 
     if (this.presenceChannels.has(name)) {
       return this.presenceChannels.get(name)!;
     }
 
-    const subscription = await this.createSubscription(name);
+    const subscription = await this.createSubscription(backendName, "presence", name);
     const channel = new PresenceChannel(
       name,
       subscription,
@@ -131,28 +152,37 @@ export class RealtimeManager {
     return channel;
   }
 
-  private async createSubscription(name: string) {
+  private async createSubscription(
+    name: string,
+    mode: "public" | "private" | "presence",
+    logicalName = name,
+  ) {
     if (!this.client) {
       throw new Error(
         "Not connected. Call connect() before creating channels.",
       );
     }
 
-    const type = parseChannelType(name);
-
-    if (type !== "public" && !this.subscriberId) {
+    if (mode === "private" && !this.config.authManager.hasSubscriberAccessToken()) {
       throw new Error(
-        "subscriberId is required for private and presence channels. Provide it in connect() options.",
+        "subscriberAccessToken is required for private channels. Provide it in config, connect() options, or setSubscriberTokens().",
       );
     }
 
-    const { token, channel: internalName } =
-      await this.config.authManager.getSubscribeToken(
-        name,
-        this.subscriberId || "",
+    if (mode === "presence") {
+      throw new Error(
+        "Presence channels are not supported by subscriber private channel auth yet.",
       );
+    }
 
-    this.internalNames.set(name, internalName);
+    const { token, channel: internalName } = mode === "private"
+      ? await this.config.authManager.getPrivateSubscribeToken(name)
+      : await this.config.authManager.getSubscribeToken(
+          name,
+          this.subscriberId || "",
+        );
+
+    this.internalNames.set(logicalName, internalName);
 
     const existing = this.client.getSubscription(internalName);
     if (existing) return existing;
@@ -160,10 +190,12 @@ export class RealtimeManager {
     return this.client.newSubscription(internalName, {
       token,
       getToken: async () => {
-        const result = await this.config.authManager.getSubscribeToken(
-          name,
-          this.subscriberId || "",
-        );
+        const result = mode === "private"
+          ? await this.config.authManager.getPrivateSubscribeToken(name)
+          : await this.config.authManager.getSubscribeToken(
+              name,
+              this.subscriberId || "",
+            );
         return result.token;
       },
     });

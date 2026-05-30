@@ -11,4 +11,7 @@ export type {
   PresenceEvents,
   EmitWaveEvents,
   ChannelType,
+  SubscriberTokenPair,
+  RealtimeEventCallback,
+  RealtimePublicationEnvelope,
 } from "./types.js";

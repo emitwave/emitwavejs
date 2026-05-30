@@ -1,11 +1,17 @@
 import type { Subscription } from "centrifuge";
 import { TypedEmitter } from "../emitter.js";
-import type { ChannelEvents } from "../types.js";
+import type {
+  ChannelEvents,
+  RealtimeEventCallback,
+  RealtimePublicationEnvelope,
+} from "../types.js";
 import type { Logger } from "../utils.js";
 
 export class Channel {
   readonly name: string;
   protected emitter: TypedEmitter<ChannelEvents>;
+  private eventListeners = new Map<string, Set<RealtimeEventCallback>>();
+  private hasSubscribeBeenRequested = false;
   protected subscription: Subscription;
   protected logger: Logger;
 
@@ -20,6 +26,7 @@ export class Channel {
   private bindEvents(): void {
     this.subscription.on("publication", (ctx) => {
       this.emitter.emit("message", ctx.data);
+      this.dispatchNamedEvent(ctx.data);
     });
 
     this.subscription.on("subscribed", () => {
@@ -51,11 +58,27 @@ export class Channel {
     this.emitter.off(event, callback);
   }
 
+  listen(event: string, callback: RealtimeEventCallback): () => void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, new Set());
+    }
+    this.eventListeners.get(event)!.add(callback);
+    this.subscribe();
+    return () => this.stopListening(event, callback);
+  }
+
+  stopListening(event: string, callback: RealtimeEventCallback): void {
+    this.eventListeners.get(event)?.delete(callback);
+  }
+
   subscribe(): void {
+    if (this.hasSubscribeBeenRequested) return;
+    this.hasSubscribeBeenRequested = true;
     this.subscription.subscribe();
   }
 
   unsubscribe(): void {
+    this.hasSubscribeBeenRequested = false;
     this.subscription.unsubscribe();
   }
 
@@ -65,4 +88,25 @@ export class Channel {
     });
     return result.publications.map((p) => p.data);
   }
+
+  private dispatchNamedEvent(payload: unknown): void {
+    if (!isRealtimeEnvelope(payload)) return;
+
+    const listeners = this.eventListeners.get(payload.event);
+    if (!listeners) return;
+
+    listeners.forEach((callback) => {
+      callback(payload.data, payload);
+    });
+  }
+}
+
+function isRealtimeEnvelope(payload: unknown): payload is RealtimePublicationEnvelope {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    "event" in payload &&
+    typeof (payload as { event?: unknown }).event === "string" &&
+    "data" in payload
+  );
 }

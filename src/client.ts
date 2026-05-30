@@ -2,6 +2,7 @@ import type {
   EmitWaveConfig,
   EmitWaveEvents,
   ConnectOptions,
+  SubscriberTokenPair,
 } from "./types.js";
 import { HttpClient } from "./http.js";
 import { AuthManager } from "./auth.js";
@@ -16,6 +17,7 @@ const DEFAULT_REALTIME_URL =
 
 export class EmitWave {
   private realtimeManager: RealtimeManager;
+  private authManager: AuthManager;
   private subscriberId?: string;
 
   constructor(config: EmitWaveConfig) {
@@ -42,7 +44,10 @@ export class EmitWave {
       httpClient,
       authEndpoint: config.authEndpoint,
       logger,
+      subscriberAccessToken: config.subscriberAccessToken,
+      subscriberRefreshToken: config.subscriberRefreshToken,
     });
+    this.authManager = authManager;
 
     this.subscriberId = config.subscriberId;
 
@@ -54,8 +59,33 @@ export class EmitWave {
   }
 
   async connect(options?: ConnectOptions): Promise<void> {
+    if (options?.subscriberAccessToken || options?.subscriberRefreshToken) {
+      this.authManager.setSubscriberTokens({
+        accessToken: options.subscriberAccessToken,
+        refreshToken: options.subscriberRefreshToken,
+      });
+    }
     const subscriberId = options?.subscriberId ?? this.subscriberId;
     await this.realtimeManager.connect(subscriberId);
+  }
+
+  setSubscriberTokens(tokens: {
+    accessToken?: string;
+    refreshToken?: string;
+  }): void {
+    this.authManager.setSubscriberTokens(tokens);
+  }
+
+  issueSubscriberToken(subscriberId: string): Promise<SubscriberTokenPair> {
+    return this.authManager.issueSubscriberToken(subscriberId);
+  }
+
+  refreshSubscriberToken(refreshToken?: string): Promise<SubscriberTokenPair> {
+    return this.authManager.refreshSubscriberToken(refreshToken);
+  }
+
+  revokeSubscriberToken(refreshToken?: string): Promise<void> {
+    return this.authManager.revokeSubscriberToken(refreshToken);
   }
 
   disconnect(): void {
@@ -68,6 +98,10 @@ export class EmitWave {
 
   async channel(name: string): Promise<Channel | PresenceChannel> {
     return this.realtimeManager.channel(name);
+  }
+
+  async private(name: string): Promise<Channel> {
+    return this.realtimeManager.private(name);
   }
 
   async presence(name: string): Promise<PresenceChannel> {

@@ -60,9 +60,6 @@ export function validateChannelName(name: string): void {
   if (name.includes(":")) {
     throw new Error('Channel name cannot contain ":"');
   }
-  if (name.includes(".")) {
-    throw new Error('Channel name cannot contain "."');
-  }
 }
 
 export function decodeJwtPayload(token: string): Record<string, unknown> {
@@ -75,7 +72,70 @@ export function decodeJwtPayload(token: string): Record<string, unknown> {
 }
 
 export function parseChannelType(name: string): ChannelType {
-  if (name.startsWith("presence-")) return "presence";
-  if (name.startsWith("private-")) return "private";
+  if (isPresenceChannelName(name)) return "presence";
+  if (isPrivateChannelName(name)) return "private";
   return "public";
+}
+
+export function isPrivateChannelName(name: string): boolean {
+  return name.startsWith("private-user.") || name.startsWith("private-company.");
+}
+
+export function isPresenceChannelName(name: string): boolean {
+  return /^presence-[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(name);
+}
+
+export function hasProtectedPrefix(name: string): boolean {
+  return name.startsWith("private-") || name.startsWith("presence-");
+}
+
+export function toPrivateChannelName(name: string): string {
+  validateChannelName(name);
+  if (hasProtectedPrefix(name)) {
+    throw new Error(
+      `Do not include private- in channel names. Use private("${toLogicalChannelName(name)}") instead.`,
+    );
+  }
+
+  const parts = name.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error("Unsupported private channel name. Use user.{user_id} or company.{company_id}.");
+  }
+
+  if (parts[0] === "user") return `private-user.${parts[1]}`;
+  if (parts[0] === "company") return `private-company.${parts[1]}`;
+
+  throw new Error("Unsupported private channel name. Use user.{user_id} or company.{company_id}.");
+}
+
+export function toPresenceChannelName(name: string): string {
+  validateChannelName(name);
+  if (name.startsWith("presence-")) {
+    throw new Error(
+      `Do not include presence- in channel names. Use presence("${toLogicalChannelName(name)}") instead.`,
+    );
+  }
+
+  const parts = name.split(".");
+  if (
+    parts.length !== 2 ||
+    !/^[A-Za-z0-9_-]+$/.test(parts[0]) ||
+    !/^[A-Za-z0-9_-]+$/.test(parts[1])
+  ) {
+    throw new Error("Unsupported presence channel name. Use {scope}.{id}.");
+  }
+  return `presence-${name}`;
+}
+
+export function toLogicalChannelName(name: string): string {
+  if (name.startsWith("private-user.")) {
+    return `user.${name.slice("private-user.".length)}`;
+  }
+  if (name.startsWith("private-company.")) {
+    return `company.${name.slice("private-company.".length)}`;
+  }
+  if (name.startsWith("presence-")) {
+    return name.slice("presence-".length);
+  }
+  return name;
 }
