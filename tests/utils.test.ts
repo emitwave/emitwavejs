@@ -6,6 +6,8 @@ import {
   toSnakeCase,
   createLogger,
   hasProtectedPrefix,
+  parseChannelType,
+  toEncryptedPrivateChannelName,
   toLogicalChannelName,
   toPresenceChannelName,
   toPrivateChannelName,
@@ -103,15 +105,36 @@ describe("channel name mapping", () => {
     expect(toPresenceChannelName("company.acme")).toBe("presence-company.acme");
   });
 
+  it("maps encrypted private logical names to backend channel names", () => {
+    expect(toEncryptedPrivateChannelName("user.user_123")).toBe("private-encrypted-user.user_123");
+    expect(toEncryptedPrivateChannelName("company.acme")).toBe("private-encrypted-company.acme");
+  });
+
+  it("rejects encrypted private prefixed input", () => {
+    expect(() => toEncryptedPrivateChannelName("private-encrypted-user.user_123")).toThrow(
+      'Use encryptedPrivate("user.user_123")',
+    );
+  });
+
   it("converts backend channel names to logical names", () => {
     expect(toLogicalChannelName("private-user.user_123")).toBe("user.user_123");
     expect(toLogicalChannelName("private-company.acme")).toBe("company.acme");
+    expect(toLogicalChannelName("private-encrypted-user.user_123")).toBe("user.user_123");
+    expect(toLogicalChannelName("private-encrypted-company.acme")).toBe("company.acme");
     expect(toLogicalChannelName("presence-company.acme")).toBe("company.acme");
   });
 
   it("detects protected prefixes", () => {
     expect(hasProtectedPrefix("private-user.user_123")).toBe(true);
+    expect(hasProtectedPrefix("private-encrypted-user.user_123")).toBe(true);
     expect(hasProtectedPrefix("presence-company.acme")).toBe(true);
     expect(hasProtectedPrefix("announcements")).toBe(false);
+  });
+
+  it("parses encrypted private channel types", () => {
+    expect(parseChannelType("private-encrypted-user.user_123")).toBe("encrypted_private");
+    expect(parseChannelType("presence-company.acme")).toBe("presence");
+    expect(parseChannelType("private-user.user_123")).toBe("private");
+    expect(parseChannelType("announcements")).toBe("public");
   });
 });

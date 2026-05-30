@@ -35,6 +35,7 @@ describe("RealtimeManager", () => {
       getConnectToken: vi.fn().mockResolvedValue("connect_jwt"),
       getSubscribeToken: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:room" }),
       getPrivateSubscribeToken: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:private" }),
+      getProtectedSubscribeToken: vi.fn().mockResolvedValue({ token: "sub_jwt", channel: "org:private" }),
       hasSubscriberAccessToken: vi.fn().mockReturnValue(true),
     } as unknown as AuthManager;
   });
@@ -93,7 +94,7 @@ describe("RealtimeManager", () => {
     expect(mockClient.newSubscription).toHaveBeenCalledTimes(1);
   });
 
-  it("presence channels are reserved", async () => {
+  it("routes presence channels through protected auth", async () => {
     const manager = new RealtimeManager({
       realtimeUrl: "wss://rt.example.com/ws",
       authManager,
@@ -101,8 +102,12 @@ describe("RealtimeManager", () => {
     });
 
     await manager.connect("user_1");
-    await expect(manager.presence("company.acme")).rejects.toThrow(
-      "Presence channels are not supported",
+    await manager.presence("company.acme");
+
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-company.acme");
+    expect(mockClient.newSubscription).toHaveBeenCalledWith(
+      "org:private",
+      expect.objectContaining({ token: "sub_jwt" }),
     );
   });
 
@@ -121,6 +126,7 @@ describe("RealtimeManager", () => {
       getConnectToken: vi.fn().mockResolvedValue("connect_jwt"),
       getSubscribeToken: vi.fn(),
       getPrivateSubscribeToken: vi.fn(),
+      getProtectedSubscribeToken: vi.fn(),
       hasSubscriberAccessToken: vi.fn().mockReturnValue(false),
     } as unknown as AuthManager;
     const manager = new RealtimeManager({
@@ -146,7 +152,7 @@ describe("RealtimeManager", () => {
     await manager.connect();
     await manager.private("user.user_1");
 
-    expect(authManager.getPrivateSubscribeToken).toHaveBeenCalledWith("private-user.user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-user.user_1");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -163,7 +169,60 @@ describe("RealtimeManager", () => {
     await manager.connect();
     await manager.private("company.acme");
 
-    expect(authManager.getPrivateSubscribeToken).toHaveBeenCalledWith("private-company.acme");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-company.acme");
+  });
+
+  it("routes encrypted private channels through protected auth", async () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(1)));
+    authManager = {
+      getConnectToken: vi.fn().mockResolvedValue("connect_jwt"),
+      getSubscribeToken: vi.fn(),
+      getPrivateSubscribeToken: vi.fn(),
+      getProtectedSubscribeToken: vi.fn().mockResolvedValue({
+        token: "sub_jwt",
+        channel: "org:encrypted",
+        sharedSecret: key,
+      }),
+      hasSubscriberAccessToken: vi.fn().mockReturnValue(true),
+    } as unknown as AuthManager;
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    await manager.connect();
+    await manager.encryptedPrivate("user.user_1");
+
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-encrypted-user.user_1");
+    expect(mockClient.newSubscription).toHaveBeenCalledWith(
+      "org:encrypted",
+      expect.objectContaining({ token: "sub_jwt" }),
+    );
+  });
+
+  it("requires shared secret for encrypted private channels", async () => {
+    authManager = {
+      getConnectToken: vi.fn().mockResolvedValue("connect_jwt"),
+      getSubscribeToken: vi.fn(),
+      getPrivateSubscribeToken: vi.fn(),
+      getProtectedSubscribeToken: vi.fn().mockResolvedValue({
+        token: "sub_jwt",
+        channel: "org:encrypted",
+      }),
+      hasSubscriberAccessToken: vi.fn().mockReturnValue(true),
+    } as unknown as AuthManager;
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    await manager.connect();
+
+    await expect(manager.encryptedPrivate("user.user_1")).rejects.toThrow(
+      "shared_secret is required",
+    );
   });
 
   it("rejects protected prefixed names through public channel()", async () => {
@@ -177,6 +236,12 @@ describe("RealtimeManager", () => {
 
     await expect(manager.channel("private-user.user_1")).rejects.toThrow(
       'Use private("user.user_1")',
+    );
+    await expect(manager.channel("private-encrypted-user.user_1")).rejects.toThrow(
+      'Use encryptedPrivate("user.user_1")',
+    );
+    await expect(manager.channel("presence-user.user_1")).rejects.toThrow(
+      'Use presence("user.user_1")',
     );
   });
 

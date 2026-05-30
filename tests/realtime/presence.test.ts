@@ -34,7 +34,11 @@ describe("PresenceChannel", () => {
     channel.on("join", cb);
 
     sub._trigger("join", { info: { client: "c1", user: "u1" } });
-    expect(cb).toHaveBeenCalledWith({ clientId: "c1", userId: "u1" });
+    expect(cb).toHaveBeenCalledWith({
+      clientId: "c1",
+      userId: "u1",
+      info: { client: "c1", user: "u1" },
+    });
   });
 
   it("emits leave event", () => {
@@ -45,7 +49,11 @@ describe("PresenceChannel", () => {
     channel.on("leave", cb);
 
     sub._trigger("leave", { info: { client: "c1", user: "u1" } });
-    expect(cb).toHaveBeenCalledWith({ clientId: "c1", userId: "u1" });
+    expect(cb).toHaveBeenCalledWith({
+      clientId: "c1",
+      userId: "u1",
+      info: { client: "c1", user: "u1" },
+    });
   });
 
   it("returns members list", async () => {
@@ -54,9 +62,39 @@ describe("PresenceChannel", () => {
 
     const members = await channel.members();
     expect(members).toEqual([
-      { clientId: "client_1", userId: "user_1" },
-      { clientId: "client_2", userId: "user_2" },
+      { clientId: "client_1", userId: "user_1", info: { client: "client_1", user: "user_1" } },
+      { clientId: "client_2", userId: "user_2", info: { client: "client_2", user: "user_2" } },
     ]);
+  });
+
+  it("listens for matching named events", () => {
+    const sub = createMockSubscription();
+    const channel = new PresenceChannel("test", sub as any, logger);
+
+    const cb = vi.fn();
+    channel.listen("member.updated", cb);
+
+    sub._trigger("publication", {
+      data: {
+        event: "member.updated",
+        data: { userId: "user_1" },
+      },
+    });
+
+    expect(cb).toHaveBeenCalledWith(
+      { userId: "user_1" },
+      { event: "member.updated", data: { userId: "user_1" } },
+    );
+  });
+
+  it("listen auto-subscribes once", () => {
+    const sub = createMockSubscription();
+    const channel = new PresenceChannel("test", sub as any, logger);
+
+    channel.listen("member.updated", vi.fn());
+    channel.listen("member.removed", vi.fn());
+
+    expect(sub.subscribe).toHaveBeenCalledTimes(1);
   });
 
   it("still emits channel events like message", () => {

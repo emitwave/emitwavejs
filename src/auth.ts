@@ -12,8 +12,17 @@ interface SubscribeTokenResponse {
   channel: string;
 }
 
+export interface ProtectedSubscribeTokenResponse extends SubscribeTokenResponse {
+  channelData?: string;
+  sharedSecret?: string;
+}
+
 interface BroadcastingAuthResponse {
   auth: string;
+  channel_data?: string;
+  channelData?: string;
+  shared_secret?: string;
+  sharedSecret?: string;
 }
 
 export interface AuthManagerConfig {
@@ -52,7 +61,7 @@ export class AuthManager {
   }
 
   hasSubscriberAccessToken(): boolean {
-    return Boolean(this.subscriberAccessToken);
+    return Boolean(this.subscriberAccessToken || this.subscriberRefreshToken);
   }
 
   async issueSubscriberToken(subscriberId: string): Promise<SubscriberTokenPair> {
@@ -136,10 +145,21 @@ export class AuthManager {
     return this.subscribeTokenResult(result.token);
   }
 
-  async getPrivateSubscribeToken(channel: string): Promise<SubscribeTokenResponse> {
+  async getPrivateSubscribeToken(channel: string): Promise<ProtectedSubscribeTokenResponse> {
     this.logger.log("Fetching private subscribe token for", channel);
-    const token = await this.getPrivateChannelToken(channel);
-    return this.subscribeTokenResult(token);
+    return this.getProtectedSubscribeToken(channel);
+  }
+
+  async getProtectedSubscribeToken(channel: string): Promise<ProtectedSubscribeTokenResponse> {
+    this.logger.log("Fetching protected subscribe token for", channel);
+    const result = await this.getProtectedChannelAuth(channel);
+    const tokenResult = this.subscribeTokenResult(result.auth);
+    const protectedResult: ProtectedSubscribeTokenResponse = { ...tokenResult };
+    const channelData = result.channel_data ?? result.channelData;
+    const sharedSecret = result.shared_secret ?? result.sharedSecret;
+    if (channelData !== undefined) protectedResult.channelData = channelData;
+    if (sharedSecret !== undefined) protectedResult.sharedSecret = sharedSecret;
+    return protectedResult;
   }
 
   private subscribeTokenResult(token: string): SubscribeTokenResponse {
@@ -148,22 +168,25 @@ export class AuthManager {
     return { token, channel: internalChannel };
   }
 
-  private async getPrivateChannelToken(channel: string): Promise<string> {
+  private async getProtectedChannelAuth(channel: string): Promise<BroadcastingAuthResponse> {
     if (!this.subscriberAccessToken && this.subscriberRefreshToken) {
       await this.refreshSubscriberToken();
     }
     if (!this.subscriberAccessToken) {
       throw new Error(
-        "subscriberAccessToken is required for private channels. Pass it in the EmitWave config, connect() options, or setSubscriberTokens().",
+        "subscriberAccessToken is required for protected channels. Pass it in the EmitWave config, connect() options, or setSubscriberTokens().",
       );
     }
 
-    const result = await this.httpClient.postWithBearer<BroadcastingAuthResponse>(
+    if (this.authEndpoint) {
+      return this.fetchProtectedFromAuthEndpoint(channel);
+    }
+
+    return this.httpClient.postWithBearer<BroadcastingAuthResponse>(
       "/v1/subscriber/broadcasting/auth",
       { channelName: channel },
       this.subscriberAccessToken,
     );
-    return result.auth;
   }
 
   private async fetchFromAuthEndpoint(
@@ -184,5 +207,36 @@ export class AuthManager {
 
     const data = await response.json();
     return data.token;
+  }
+
+  private async fetchProtectedFromAuthEndpoint(
+    channel: string,
+  ): Promise<BroadcastingAuthResponse> {
+    const response = await fetch(this.authEndpoint!, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "protectedSubscribe", channel }),
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `Auth endpoint returned ${response.status}: ${response.statusText}`,
+      );
+    }
+
+    const data = await response.json();
+    if (typeof data.auth === "string") {
+      return data;
+    }
+    if (typeof data.token === "string") {
+      return {
+        auth: data.token,
+        channelData: data.channelData,
+        channel_data: data.channel_data,
+        sharedSecret: data.sharedSecret,
+        shared_secret: data.shared_secret,
+      };
+    }
+    throw new Error("Auth endpoint must return auth for protected channels");
   }
 }

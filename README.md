@@ -33,6 +33,10 @@ await emitwave2.connect(); // no subscriberId needed
 const channel = await emitwave.private("user.user_123");
 channel.listen("notification.created", (data) => console.log(data));
 
+// Subscribe to an encrypted private channel
+const secure = await emitwave.encryptedPrivate("user.user_123");
+secure.listen("notification.created", (data) => console.log(data));
+
 // Subscribe to a public channel (no auth token needed)
 const news = await emitwave.channel("news");
 news.listen("product.updated", (data) => console.log(data));
@@ -49,7 +53,8 @@ Channels are categorized by SDK method:
 |--------|------|------|-------------|
 | _(none)_ | Public | No token | Open channels anyone can subscribe to |
 | `emitwave.private(name)` | Private | Subscriber access token | Authenticated subscriber channels |
-| `emitwave.presence(name)` | Presence | Not supported by subscriber private auth yet | Reserved for presence features |
+| `emitwave.presence(name)` | Presence | Subscriber access token | Authenticated channels with member join/leave state |
+| `emitwave.encryptedPrivate(name)` | Encrypted private | Subscriber access token | Authenticated channels with encrypted payload data |
 
 ```ts
 // Public channel — no subscribe token requested
@@ -60,6 +65,12 @@ const inbox = await emitwave.private("user.user_123");
 
 // Company channel — the SDK sends private-company.acme to the backend
 const billing = await emitwave.private("company.acme");
+
+// Presence channel — the SDK sends presence-user.user_123 to the backend
+const presence = await emitwave.presence("user.user_123");
+
+// Encrypted private channel — the SDK sends private-encrypted-user.user_123 to the backend
+const secureInbox = await emitwave.encryptedPrivate("user.user_123");
 ```
 
 ## Channel Names
@@ -69,14 +80,14 @@ Channel names must follow these rules:
 - Cannot be empty
 - Maximum 200 characters
 - Cannot contain `:` (colon)
-- Private helper names are prefixless: `user.user_123` or `company.acme`
-- Do not pass `private-` or `presence-` prefixes to SDK helper methods
+- Protected helper names are prefixless: `user.user_123` or `company.acme`
+- Do not pass `private-`, `presence-`, or `private-encrypted-` prefixes to SDK helper methods
 
 Invalid names throw an error immediately on the client, before any server request is made.
 
 ## Listening for Events
 
-Backend publishes use a Pusher-style event envelope:
+Backend publishes use an EmitWave event envelope:
 
 ```json
 {
@@ -105,6 +116,27 @@ billing.on("message", (payload) => {
 });
 ```
 
+Presence channels support the same event listener API plus member events:
+
+```ts
+const presence = await emitwave.presence("company.acme");
+presence.listen("member.updated", (data) => console.log(data));
+presence.on("join", (member) => console.log("joined", member.userId));
+presence.on("leave", (member) => console.log("left", member.userId));
+const members = await presence.members();
+```
+
+Encrypted private channels decrypt the backend payload before calling your
+listeners. The event name and channel name remain visible to routing systems;
+only `data` is encrypted in transit through realtime infrastructure.
+
+```ts
+const secure = await emitwave.encryptedPrivate("user.user_123");
+secure.listen("notification.created", (data) => {
+  console.log("decrypted payload", data);
+});
+```
+
 ## Subscriber Tokens
 
 Customer backends should issue subscriber tokens after authenticating the user in
@@ -121,7 +153,7 @@ const tokens = await serverEmitWave.issueSubscriberToken("user_123");
 ```
 
 Return `tokens.accessToken` and `tokens.refreshToken` to your frontend. The
-browser SDK can then use them for private channels:
+browser SDK can then use them for private, presence, and encrypted private channels:
 
 ```ts
 const emitwave = new EmitWave({
@@ -182,11 +214,13 @@ const emitwave = new EmitWave({
 });
 ```
 
-Your endpoint receives `POST` with `{ type: "connect" | "subscribe", subscriberId?, channel? }` and must return:
+Your endpoint receives `POST` with `{ type: "connect" | "subscribe" | "protectedSubscribe", subscriberId?, channel? }` and must return:
 - For `connect`: `{ token: "jwt..." }`
 - For `subscribe`: `{ token: "jwt..." }`
+- For `protectedSubscribe`: `{ auth: "jwt...", channel_data?: "...", shared_secret?: "..." }`
 
 The SDK automatically extracts the internal channel name from the JWT payload.
+`channel_data` is used for presence channels. `shared_secret` is required for encrypted private channels.
 
 ## TypeScript
 
@@ -197,6 +231,8 @@ import type {
   EmitWaveConfig,
   PresenceInfo,
   ChannelEvents,
+  EncryptedPrivateChannel,
+  EncryptedPublicationData,
   ChannelType,
   EmitWaveEvents,
   RealtimeEventCallback,

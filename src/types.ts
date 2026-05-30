@@ -15,11 +15,18 @@ export type ConnectionState = "disconnected" | "connecting" | "connected";
 export interface PresenceInfo {
   clientId: string;
   userId: string;
+  info?: unknown;
 }
 
 export interface RealtimePublicationEnvelope {
   event: string;
   data: unknown;
+  encrypted?: boolean;
+}
+
+export interface EncryptedPublicationData {
+  ciphertext: string;
+  nonce: string;
 }
 
 export type RealtimeEventCallback = (

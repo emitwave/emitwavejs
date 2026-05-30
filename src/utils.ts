@@ -48,7 +48,7 @@ export function toCamelCase(obj: unknown): unknown {
   return convertKeys(obj, snakeToCamel);
 }
 
-export type ChannelType = "public" | "private" | "presence";
+export type ChannelType = "public" | "private" | "presence" | "encrypted_private";
 
 export function validateChannelName(name: string): void {
   if (!name) {
@@ -72,6 +72,7 @@ export function decodeJwtPayload(token: string): Record<string, unknown> {
 }
 
 export function parseChannelType(name: string): ChannelType {
+  if (isEncryptedPrivateChannelName(name)) return "encrypted_private";
   if (isPresenceChannelName(name)) return "presence";
   if (isPrivateChannelName(name)) return "private";
   return "public";
@@ -79,6 +80,10 @@ export function parseChannelType(name: string): ChannelType {
 
 export function isPrivateChannelName(name: string): boolean {
   return name.startsWith("private-user.") || name.startsWith("private-company.");
+}
+
+export function isEncryptedPrivateChannelName(name: string): boolean {
+  return name.startsWith("private-encrypted-user.") || name.startsWith("private-encrypted-company.");
 }
 
 export function isPresenceChannelName(name: string): boolean {
@@ -89,6 +94,19 @@ export function hasProtectedPrefix(name: string): boolean {
   return name.startsWith("private-") || name.startsWith("presence-");
 }
 
+function parseScopedChannelName(name: string, kind: string): [string, string] {
+  const parts = name.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(`Unsupported ${kind} channel name. Use user.{user_id} or company.{company_id}.`);
+  }
+
+  if (parts[0] !== "user" && parts[0] !== "company") {
+    throw new Error(`Unsupported ${kind} channel name. Use user.{user_id} or company.{company_id}.`);
+  }
+
+  return [parts[0], parts[1]];
+}
+
 export function toPrivateChannelName(name: string): string {
   validateChannelName(name);
   if (hasProtectedPrefix(name)) {
@@ -97,15 +115,20 @@ export function toPrivateChannelName(name: string): string {
     );
   }
 
-  const parts = name.split(".");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error("Unsupported private channel name. Use user.{user_id} or company.{company_id}.");
+  const [scope, id] = parseScopedChannelName(name, "private");
+  return `private-${scope}.${id}`;
+}
+
+export function toEncryptedPrivateChannelName(name: string): string {
+  validateChannelName(name);
+  if (hasProtectedPrefix(name)) {
+    throw new Error(
+      `Do not include private-encrypted- in channel names. Use encryptedPrivate("${toLogicalChannelName(name)}") instead.`,
+    );
   }
 
-  if (parts[0] === "user") return `private-user.${parts[1]}`;
-  if (parts[0] === "company") return `private-company.${parts[1]}`;
-
-  throw new Error("Unsupported private channel name. Use user.{user_id} or company.{company_id}.");
+  const [scope, id] = parseScopedChannelName(name, "encrypted private");
+  return `private-encrypted-${scope}.${id}`;
 }
 
 export function toPresenceChannelName(name: string): string {
@@ -128,6 +151,12 @@ export function toPresenceChannelName(name: string): string {
 }
 
 export function toLogicalChannelName(name: string): string {
+  if (name.startsWith("private-encrypted-user.")) {
+    return `user.${name.slice("private-encrypted-user.".length)}`;
+  }
+  if (name.startsWith("private-encrypted-company.")) {
+    return `company.${name.slice("private-encrypted-company.".length)}`;
+  }
   if (name.startsWith("private-user.")) {
     return `user.${name.slice("private-user.".length)}`;
   }

@@ -1,5 +1,6 @@
 export { EmitWave } from "./client.js";
 export { Channel } from "./realtime/channel.js";
+export { EncryptedPrivateChannel } from "./realtime/encrypted-private.js";
 export { PresenceChannel } from "./realtime/presence.js";
 export { EmitWaveError } from "./errors.js";
 export type {
@@ -14,4 +15,5 @@ export type {
   SubscriberTokenPair,
   RealtimeEventCallback,
   RealtimePublicationEnvelope,
+  EncryptedPublicationData,
 } from "./types.js";

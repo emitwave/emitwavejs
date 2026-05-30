@@ -1,11 +1,18 @@
 import type { Subscription } from "centrifuge";
 import { TypedEmitter } from "../emitter.js";
-import type { PresenceEvents, PresenceInfo } from "../types.js";
+import type {
+  PresenceEvents,
+  PresenceInfo,
+  RealtimeEventCallback,
+} from "../types.js";
 import type { Logger } from "../utils.js";
+import { isRealtimeEnvelope } from "./channel.js";
 
 export class PresenceChannel {
   readonly name: string;
   private emitter = new TypedEmitter<PresenceEvents>();
+  private eventListeners = new Map<string, Set<RealtimeEventCallback>>();
+  private hasSubscribeBeenRequested = false;
   private subscription: Subscription;
   private logger: Logger;
 
@@ -19,6 +26,7 @@ export class PresenceChannel {
   private bindEvents(): void {
     this.subscription.on("publication", (ctx) => {
       this.emitter.emit("message", ctx.data);
+      this.dispatchNamedEvent(ctx.data);
     });
 
     this.subscription.on("subscribed", () => {
@@ -39,6 +47,7 @@ export class PresenceChannel {
       this.emitter.emit("join", {
         clientId: ctx.info.client,
         userId: ctx.info.user,
+        info: ctx.info,
       });
     });
 
@@ -46,6 +55,7 @@ export class PresenceChannel {
       this.emitter.emit("leave", {
         clientId: ctx.info.client,
         userId: ctx.info.user,
+        info: ctx.info,
       });
     });
   }
@@ -64,11 +74,27 @@ export class PresenceChannel {
     this.emitter.off(event, callback);
   }
 
+  listen(event: string, callback: RealtimeEventCallback): () => void {
+    if (!this.eventListeners.has(event)) {
+      this.eventListeners.set(event, new Set());
+    }
+    this.eventListeners.get(event)!.add(callback);
+    this.subscribe();
+    return () => this.stopListening(event, callback);
+  }
+
+  stopListening(event: string, callback: RealtimeEventCallback): void {
+    this.eventListeners.get(event)?.delete(callback);
+  }
+
   subscribe(): void {
+    if (this.hasSubscribeBeenRequested) return;
+    this.hasSubscribeBeenRequested = true;
     this.subscription.subscribe();
   }
 
   unsubscribe(): void {
+    this.hasSubscribeBeenRequested = false;
     this.subscription.unsubscribe();
   }
 
@@ -84,6 +110,18 @@ export class PresenceChannel {
     return Object.values(result.clients).map((info) => ({
       clientId: info.client,
       userId: info.user,
+      info,
     }));
+  }
+
+  private dispatchNamedEvent(payload: unknown): void {
+    if (!isRealtimeEnvelope(payload)) return;
+
+    const listeners = this.eventListeners.get(payload.event);
+    if (!listeners) return;
+
+    listeners.forEach((callback) => {
+      callback(payload.data, payload);
+    });
   }
 }

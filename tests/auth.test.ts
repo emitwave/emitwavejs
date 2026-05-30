@@ -70,6 +70,87 @@ describe("AuthManager", () => {
     );
   });
 
+  it("authorizes protected presence channel data", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.presence-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn().mockResolvedValue({
+        auth: fakeJwt,
+        channel_data: JSON.stringify({ user_id: "user_1" }),
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "subscriber_access_jwt",
+    });
+    const result = await auth.getProtectedSubscribeToken("presence-user.user_1");
+
+    expect(result).toStrictEqual({
+      token: fakeJwt,
+      channel: "app:org.app.presence-user.user_1",
+      channelData: JSON.stringify({ user_id: "user_1" }),
+    });
+  });
+
+  it("authorizes encrypted private channel shared secret", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-encrypted-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn().mockResolvedValue({
+        auth: fakeJwt,
+        shared_secret: "secret",
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "subscriber_access_jwt",
+    });
+    const result = await auth.getProtectedSubscribeToken("private-encrypted-user.user_1");
+
+    expect(result).toStrictEqual({
+      token: fakeJwt,
+      channel: "app:org.app.private-encrypted-user.user_1",
+      sharedSecret: "secret",
+    });
+  });
+
+  it("refreshes subscriber token before protected channel auth when access token is missing", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postNoAuth: vi.fn().mockResolvedValue({
+        accessToken: "new_access",
+        refreshToken: "new_refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+      postWithBearer: vi.fn().mockResolvedValue({ auth: fakeJwt }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberRefreshToken: "old_refresh",
+    });
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/refresh",
+      { refreshToken: "old_refresh" },
+    );
+    expect(httpClient.postWithBearer).toHaveBeenCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { channelName: "private-user.user_1" },
+      "new_access",
+    );
+  });
+
   it("refreshes subscriber token", async () => {
     const httpClient = {
       postNoAuth: vi.fn().mockResolvedValue({
@@ -141,6 +222,37 @@ describe("AuthManager", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ type: "connect", subscriberId: "user_1" }),
+      }),
+    );
+  });
+
+  it("uses authEndpoint for protected channel auth", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      post: vi.fn(),
+    } as unknown as HttpClient;
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ auth: fakeJwt }),
+    });
+
+    const auth = new AuthManager({
+      httpClient,
+      authEndpoint: "https://my-backend.com/auth",
+      logger,
+      subscriberAccessToken: "subscriber_access_jwt",
+    });
+
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "https://my-backend.com/auth",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ type: "protectedSubscribe", channel: "private-user.user_1" }),
       }),
     );
   });

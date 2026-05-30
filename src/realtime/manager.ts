@@ -1,16 +1,19 @@
 import { Centrifuge } from "centrifuge";
-import type { AuthManager } from "../auth.js";
+import type { AuthManager, ProtectedSubscribeTokenResponse } from "../auth.js";
 import { TypedEmitter } from "../emitter.js";
 import type { ConnectionState, EmitWaveEvents } from "../types.js";
 import {
   hasProtectedPrefix,
+  isEncryptedPrivateChannelName,
   toLogicalChannelName,
+  toEncryptedPrivateChannelName,
   toPresenceChannelName,
   toPrivateChannelName,
   validateChannelName,
 } from "../utils.js";
 import type { Logger } from "../utils.js";
 import { Channel } from "./channel.js";
+import { EncryptedPrivateChannel } from "./encrypted-private.js";
 import { PresenceChannel } from "./presence.js";
 
 export interface RealtimeManagerConfig {
@@ -106,7 +109,11 @@ export class RealtimeManager {
     validateChannelName(name);
     if (hasProtectedPrefix(name)) {
       const logicalName = toLogicalChannelName(name);
-      const method = name.startsWith("presence-") ? "presence" : "private";
+      const method = name.startsWith("presence-")
+        ? "presence"
+        : isEncryptedPrivateChannelName(name)
+          ? "encryptedPrivate"
+          : "private";
       throw new Error(`This is a protected channel. Use ${method}("${logicalName}") instead of channel().`);
     }
 
@@ -114,7 +121,7 @@ export class RealtimeManager {
       return this.channels.get(name)!;
     }
 
-    const subscription = await this.createSubscription(name, "public");
+    const { subscription } = await this.createSubscription(name, "public");
     const channel = new Channel(name, subscription, this.config.logger);
     this.channels.set(name, channel);
     return channel;
@@ -128,8 +135,37 @@ export class RealtimeManager {
       return this.channels.get(name)!;
     }
 
-    const subscription = await this.createSubscription(backendName, "private", name);
+    const { subscription } = await this.createSubscription(backendName, "private", name);
     const channel = new Channel(name, subscription, this.config.logger);
+    this.channels.set(name, channel);
+    return channel;
+  }
+
+  async encryptedPrivate(name: string): Promise<EncryptedPrivateChannel> {
+    validateChannelName(name);
+    const backendName = toEncryptedPrivateChannelName(name);
+
+    if (this.channels.has(name)) {
+      const channel = this.channels.get(name)!;
+      if (channel instanceof EncryptedPrivateChannel) return channel;
+      throw new Error(`Channel ${name} already exists with a different type.`);
+    }
+
+    const { subscription, sharedSecret } = await this.createSubscription(
+      backendName,
+      "encrypted_private",
+      name,
+    );
+    if (!sharedSecret) {
+      throw new Error("shared_secret is required for encrypted private channels");
+    }
+
+    const channel = new EncryptedPrivateChannel(
+      name,
+      subscription,
+      this.config.logger,
+      sharedSecret,
+    );
     this.channels.set(name, channel);
     return channel;
   }
@@ -142,7 +178,7 @@ export class RealtimeManager {
       return this.presenceChannels.get(name)!;
     }
 
-    const subscription = await this.createSubscription(backendName, "presence", name);
+    const { subscription } = await this.createSubscription(backendName, "presence", name);
     const channel = new PresenceChannel(
       name,
       subscription,
@@ -154,7 +190,7 @@ export class RealtimeManager {
 
   private async createSubscription(
     name: string,
-    mode: "public" | "private" | "presence",
+    mode: "public" | "private" | "presence" | "encrypted_private",
     logicalName = name,
   ) {
     if (!this.client) {
@@ -163,41 +199,43 @@ export class RealtimeManager {
       );
     }
 
-    if (mode === "private" && !this.config.authManager.hasSubscriberAccessToken()) {
+    const isProtected = mode === "private" || mode === "presence" || mode === "encrypted_private";
+
+    if (isProtected && !this.config.authManager.hasSubscriberAccessToken()) {
       throw new Error(
-        "subscriberAccessToken is required for private channels. Provide it in config, connect() options, or setSubscriberTokens().",
+        "subscriberAccessToken is required for protected channels. Provide it in config, connect() options, or setSubscriberTokens().",
       );
     }
 
-    if (mode === "presence") {
-      throw new Error(
-        "Presence channels are not supported by subscriber private channel auth yet.",
-      );
-    }
-
-    const { token, channel: internalName } = mode === "private"
-      ? await this.config.authManager.getPrivateSubscribeToken(name)
+    const authResult: ProtectedSubscribeTokenResponse = isProtected
+      ? await this.config.authManager.getProtectedSubscribeToken(name)
       : await this.config.authManager.getSubscribeToken(
           name,
           this.subscriberId || "",
         );
+    const { token, channel: internalName } = authResult;
 
     this.internalNames.set(logicalName, internalName);
 
     const existing = this.client.getSubscription(internalName);
-    if (existing) return existing;
+    if (existing) {
+      return { subscription: existing, sharedSecret: authResult.sharedSecret };
+    }
 
-    return this.client.newSubscription(internalName, {
+    return {
+      subscription: this.client.newSubscription(internalName, {
       token,
       getToken: async () => {
-        const result = mode === "private"
-          ? await this.config.authManager.getPrivateSubscribeToken(name)
+        const result = isProtected
+          ? await this.config.authManager.getProtectedSubscribeToken(name)
           : await this.config.authManager.getSubscribeToken(
               name,
               this.subscriberId || "",
             );
         return result.token;
       },
-    });
+      }),
+      sharedSecret: authResult.sharedSecret,
+    };
   }
 }

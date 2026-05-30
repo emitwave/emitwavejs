@@ -9,6 +9,7 @@ import { AuthManager } from "./auth.js";
 import { RealtimeManager } from "./realtime/manager.js";
 import { createLogger } from "./utils.js";
 import type { Channel } from "./realtime/channel.js";
+import type { EncryptedPrivateChannel } from "./realtime/encrypted-private.js";
 import type { PresenceChannel } from "./realtime/presence.js";
 
 const DEFAULT_API_URL = "https://api.emitwave.com";
@@ -102,6 +103,10 @@ export class EmitWave {
 
   async private(name: string): Promise<Channel> {
     return this.realtimeManager.private(name);
+  }
+
+  async encryptedPrivate(name: string): Promise<EncryptedPrivateChannel> {
+    return this.realtimeManager.encryptedPrivate(name);
   }
 
   async presence(name: string): Promise<PresenceChannel> {

@@ -10,23 +10,27 @@ import type { Logger } from "../utils.js";
 export class Channel {
   readonly name: string;
   protected emitter: TypedEmitter<ChannelEvents>;
-  private eventListeners = new Map<string, Set<RealtimeEventCallback>>();
+  protected eventListeners = new Map<string, Set<RealtimeEventCallback>>();
   private hasSubscribeBeenRequested = false;
   protected subscription: Subscription;
   protected logger: Logger;
 
-  constructor(name: string, subscription: Subscription, logger: Logger) {
+  constructor(
+    name: string,
+    subscription: Subscription,
+    logger: Logger,
+    bindEvents = true,
+  ) {
     this.name = name;
     this.subscription = subscription;
     this.logger = logger;
     this.emitter = new TypedEmitter<ChannelEvents>();
-    this.bindEvents();
+    if (bindEvents) this.bindEvents();
   }
 
-  private bindEvents(): void {
+  protected bindEvents(): void {
     this.subscription.on("publication", (ctx) => {
-      this.emitter.emit("message", ctx.data);
-      this.dispatchNamedEvent(ctx.data);
+      this.emitPublication(ctx.data);
     });
 
     this.subscription.on("subscribed", () => {
@@ -89,7 +93,12 @@ export class Channel {
     return result.publications.map((p) => p.data);
   }
 
-  private dispatchNamedEvent(payload: unknown): void {
+  protected emitPublication(payload: unknown): void {
+    this.emitter.emit("message", payload);
+    this.dispatchNamedEvent(payload);
+  }
+
+  protected dispatchNamedEvent(payload: unknown): void {
     if (!isRealtimeEnvelope(payload)) return;
 
     const listeners = this.eventListeners.get(payload.event);
@@ -101,7 +110,7 @@ export class Channel {
   }
 }
 
-function isRealtimeEnvelope(payload: unknown): payload is RealtimePublicationEnvelope {
+export function isRealtimeEnvelope(payload: unknown): payload is RealtimePublicationEnvelope {
   return (
     payload !== null &&
     typeof payload === "object" &&
