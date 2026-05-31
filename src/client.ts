@@ -60,9 +60,13 @@ export class EmitWave {
   }
 
   async connect(options?: ConnectOptions): Promise<void> {
-    if (options?.subscriberAccessToken || options?.subscriberRefreshToken) {
+    if (options?.subscriberAccessToken) {
       this.authManager.setSubscriberTokens({
         accessToken: options.subscriberAccessToken,
+        refreshToken: options.subscriberRefreshToken,
+      });
+    } else if (options?.subscriberRefreshToken) {
+      this.authManager.setSubscriberTokens({
         refreshToken: options.subscriberRefreshToken,
       });
     }

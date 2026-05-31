@@ -29,6 +29,31 @@ describe("RealtimeManager", () => {
   const logger = createLogger(false);
   let authManager: AuthManager;
 
+  function emitConnected(client = "client-123") {
+    const handler = mockClient.on.mock.calls.find(([event]) => event === "connected")?.[1];
+    if (!handler) throw new Error("connected handler was not registered");
+    handler({ client });
+  }
+
+  function emitDisconnected(reason = "transport closed") {
+    const handler = mockClient.on.mock.calls.find(([event]) => event === "disconnected")?.[1];
+    if (!handler) throw new Error("disconnected handler was not registered");
+    handler({ reason });
+  }
+
+  function emitError(message = "connection failed") {
+    const handler = mockClient.on.mock.calls.find(([event]) => event === "error")?.[1];
+    if (!handler) throw new Error("error handler was not registered");
+    handler({ error: { message } });
+  }
+
+  async function connectManager(manager: RealtimeManager, subscriberExternalId?: string) {
+    const promise = manager.connect(subscriberExternalId);
+    await Promise.resolve();
+    emitConnected();
+    await promise;
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     authManager = {
@@ -47,21 +72,63 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    const connectPromise = manager.connect("user_1");
+    await Promise.resolve();
     expect(authManager.getConnectToken).toHaveBeenCalledWith("user_1");
     expect(mockClient.connect).toHaveBeenCalled();
+    emitConnected();
+    await connectPromise;
   });
 
-  it("state is connecting after connect call", async () => {
+  it("connect resolves after the connected event provides the socket ID", async () => {
     const manager = new RealtimeManager({
       realtimeUrl: "wss://rt.example.com/ws",
       authManager,
       logger,
     });
 
-    await manager.connect("user_1");
-    // State is "connecting" until the connected event fires
+    let resolved = false;
+    const connectPromise = manager.connect("user_1").then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
     expect(manager.state).toBe("connecting");
+    expect(resolved).toBe(false);
+
+    emitConnected("client-123");
+    await connectPromise;
+
+    expect(manager.state).toBe("connected");
+    expect(resolved).toBe(true);
+  });
+
+  it("rejects connect if the connection errors before the first connected event", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    const connectPromise = manager.connect("user_1");
+    await Promise.resolve();
+    emitError("bad token");
+
+    await expect(connectPromise).rejects.toThrow("bad token");
+  });
+
+  it("rejects connect if the connection disconnects before the first connected event", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    const connectPromise = manager.connect("user_1");
+    await Promise.resolve();
+    emitDisconnected("closed before connect");
+
+    await expect(connectPromise).rejects.toThrow("closed before connect");
   });
 
   it("disconnect clears state", async () => {
@@ -71,7 +138,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     manager.disconnect();
 
     expect(mockClient.disconnect).toHaveBeenCalled();
@@ -86,7 +153,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     const ch1 = await manager.channel("room-1");
     const ch2 = await manager.channel("room-1");
 
@@ -101,10 +168,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     await manager.presence("company.acme");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-company.acme", "user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-company.acme", "user_1", "client-123");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -118,10 +185,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     await manager.presence("user.user_1");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-user.user_1", "user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("presence-user.user_1", "user_1", "client-123");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -152,7 +219,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
 
     await expect(manager.private("user.user_1")).rejects.toThrow(
       "subscriberAccessToken is required",
@@ -166,10 +233,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     await manager.private("user.user_1");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-user.user_1", "user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-user.user_1", "user_1", "client-123");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:private",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -183,10 +250,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     await manager.private("company.acme");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-company.acme", "user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-company.acme", "user_1", "client-123");
   });
 
   it("routes encrypted private channels through protected auth", async () => {
@@ -208,10 +275,10 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
     await manager.encryptedPrivate("user.user_1");
 
-    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-encrypted-user.user_1", "user_1");
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenCalledWith("private-encrypted-user.user_1", "user_1", "client-123");
     expect(mockClient.newSubscription).toHaveBeenCalledWith(
       "org:encrypted",
       expect.objectContaining({ token: "sub_jwt" }),
@@ -235,7 +302,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect("user_1");
+    await connectManager(manager, "user_1");
 
     await expect(manager.encryptedPrivate("user.user_1")).rejects.toThrow(
       "shared_secret is required",
@@ -249,7 +316,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await connectManager(manager);
 
     await expect(manager.private("user.user_1")).rejects.toThrow(
       "subscriberExternalId is required",
@@ -263,7 +330,7 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await connectManager(manager);
 
     await expect(manager.channel("private-user.user_1")).rejects.toThrow(
       'Use private("user.user_1")',
@@ -283,10 +350,51 @@ describe("RealtimeManager", () => {
       logger,
     });
 
-    await manager.connect();
+    await connectManager(manager);
 
     await expect(manager.private("private-user.user_1")).rejects.toThrow(
       'Use private("user.user_1")',
+    );
+  });
+
+  it("requires the connected socket ID for protected channels", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    const connectPromise = manager.connect("user_1");
+    await Promise.resolve();
+
+    await expect(manager.private("user.user_1")).rejects.toThrow(
+      "Protected channels require an active socket connection",
+    );
+    emitConnected();
+    await connectPromise;
+  });
+
+  it("uses the latest connected socket ID when refreshing protected subscription tokens", async () => {
+    const manager = new RealtimeManager({
+      realtimeUrl: "wss://rt.example.com/ws",
+      authManager,
+      logger,
+    });
+
+    const connectPromise = manager.connect("user_1");
+    await Promise.resolve();
+    emitConnected("client-123");
+    await connectPromise;
+    await manager.private("user.user_1");
+
+    const subscriptionOptions = mockClient.newSubscription.mock.calls[0][1];
+    emitConnected("client-456");
+    await subscriptionOptions.getToken();
+
+    expect(authManager.getProtectedSubscribeToken).toHaveBeenLastCalledWith(
+      "private-user.user_1",
+      "user_1",
+      "client-456",
     );
   });
 });

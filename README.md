@@ -159,17 +159,17 @@ const response = await fetch("https://api.emitwave.com/v1/subscribers/user_123/t
 const tokens = await response.json();
 ```
 
-Return `tokens.accessToken` and `tokens.refreshToken` to your frontend. The
-browser SDK can then use them with the subscriber external ID for private,
-presence, and encrypted private channels:
+Return `tokens.access_token` and `tokens.refresh_token` to your frontend. The
+browser SDK keeps them in memory and uses them with the subscriber external ID
+for private, presence, and encrypted private channels:
 
 ```ts
 const emitwave = new EmitWave({
   appId: "app_123",
   publicKey: "ew_pk_xxx",
   subscriberExternalId: "user_123",
-  subscriberAccessToken: tokens.accessToken,
-  subscriberRefreshToken: tokens.refreshToken,
+  subscriberAccessToken: tokens.access_token,
+  subscriberRefreshToken: tokens.refresh_token,
 });
 
 await emitwave.connect();
@@ -177,9 +177,17 @@ const inbox = await emitwave.private("user.user_123");
 inbox.listen("notification.created", (data) => console.log(data));
 ```
 
-Refresh tokens rotate. Store the latest refresh token returned by refresh:
+For protected channels, call `connect()` first. After the realtime connection
+opens, the SDK receives the active socket ID and includes it when requesting
+private, presence, or encrypted private channel auth. The returned protected
+auth token is scoped to that socket connection and channel.
 
 ```ts
+emitwave.setSubscriberTokens({
+  accessToken: nextSubscriberAccessToken,
+  refreshToken: nextSubscriberRefreshToken,
+});
+
 const next = await emitwave.refreshSubscriberToken();
 emitwave.setSubscriberTokens({
   accessToken: next.accessToken,
@@ -188,6 +196,11 @@ emitwave.setSubscriberTokens({
 
 await emitwave.revokeSubscriberToken(); // logout
 ```
+
+If protected-channel authorization fails with `401` and a refresh token is
+available, the SDK refreshes the subscriber token pair, stores the new values in
+memory, and retries the protected-channel authorization once. Refresh tokens are
+not persisted by the SDK.
 
 ## Connection Events
 
@@ -205,7 +218,7 @@ const emitwave = new EmitWave({
   publicKey: "ew_pk_xxx",
   subscriberExternalId: "user_123",
   subscriberAccessToken: "subscriber_access_jwt",
-  subscriberRefreshToken: "ewr_refresh_token",
+  subscriberRefreshToken: "subscriber_refresh_token",
   apiUrl: "https://api.emitwave.com",       // default
   realtimeUrl: "wss://rt.emitwave.com/connection/websocket", // default
   debug: false,                               // enable console logging
@@ -224,10 +237,12 @@ const emitwave = new EmitWave({
 });
 ```
 
-Your endpoint receives `POST` with `{ type: "connect" | "subscribe" | "protectedSubscribe", subscriberExternalId?, channel? }` and must return:
+Your endpoint receives `POST` with `{ type: "connect" | "subscribe" | "protectedSubscribe", subscriberExternalId?, channel?, socketId? }` and must return:
 - For `connect`: `{ token: "jwt..." }`
 - For `subscribe`: `{ token: "jwt..." }`
 - For `protectedSubscribe`: `{ auth: "jwt...", channel_data?: "...", shared_secret?: "..." }`
+
+For `protectedSubscribe`, `socketId` is the active realtime connection ID. Forward it as `socket_id` when calling EmitWave protected channel auth so the returned token is valid only for that socket and channel.
 
 The SDK automatically extracts the internal channel name from the JWT payload.
 `channel_data` is used for presence channels. `shared_secret` is required for encrypted private channels.

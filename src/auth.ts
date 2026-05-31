@@ -1,7 +1,10 @@
 import { HttpClient } from "./http.js";
+import { EmitWaveError } from "./errors.js";
 import type { SubscriberTokenPair } from "./types.js";
 import type { Logger } from "./utils.js";
 import { decodeJwtPayload } from "./utils.js";
+
+const SUBSCRIBER_ACCESS_REFRESH_SKEW_SECONDS = 30;
 
 interface TokenResponse {
   token: string;
@@ -69,6 +72,7 @@ export class AuthManager {
       throw new Error("refreshToken is required to refresh subscriber tokens");
     }
 
+    this.logger.log("Refreshing subscriber access token");
     const result = await this.httpClient.postNoAuth<SubscriberTokenPair>(
       "/v1/subscriber/token/refresh",
       { refreshToken },
@@ -139,17 +143,19 @@ export class AuthManager {
   async getPrivateSubscribeToken(
     channel: string,
     subscriberExternalId = "",
+    socketId = "",
   ): Promise<ProtectedSubscribeTokenResponse> {
     this.logger.log("Fetching private subscribe token for", channel);
-    return this.getProtectedSubscribeToken(channel, subscriberExternalId);
+    return this.getProtectedSubscribeToken(channel, subscriberExternalId, socketId);
   }
 
   async getProtectedSubscribeToken(
     channel: string,
     subscriberExternalId = "",
+    socketId = "",
   ): Promise<ProtectedSubscribeTokenResponse> {
     this.logger.log("Fetching protected subscribe token for", channel);
-    const result = await this.getProtectedChannelAuth(channel, subscriberExternalId);
+    const result = await this.getProtectedChannelAuth(channel, subscriberExternalId, socketId);
     const tokenResult = this.subscribeTokenResult(result.auth);
     const protectedResult: ProtectedSubscribeTokenResponse = { ...tokenResult };
     const channelData = result.channel_data ?? result.channelData;
@@ -168,8 +174,15 @@ export class AuthManager {
   private async getProtectedChannelAuth(
     channel: string,
     subscriberExternalId = "",
+    socketId = "",
   ): Promise<BroadcastingAuthResponse> {
+    if (!socketId) {
+      throw new Error("socketId is required for protected channel authorization");
+    }
     if (!this.subscriberAccessToken && this.subscriberRefreshToken) {
+      await this.refreshSubscriberToken();
+    }
+    if (this.subscriberAccessTokenExpired() && this.subscriberRefreshToken) {
       await this.refreshSubscriberToken();
     }
     if (!this.subscriberAccessToken) {
@@ -179,14 +192,47 @@ export class AuthManager {
     }
 
     if (this.authEndpoint) {
-      return this.fetchProtectedFromAuthEndpoint(channel, subscriberExternalId);
+      return this.fetchProtectedFromAuthEndpoint(channel, subscriberExternalId, socketId);
     }
 
+    try {
+      return await this.requestProtectedChannelAuth(channel, socketId);
+    } catch (err) {
+      if (!this.shouldRefreshSubscriberToken(err)) {
+        throw err;
+      }
+
+      await this.refreshSubscriberToken();
+      return this.requestProtectedChannelAuth(channel, socketId);
+    }
+  }
+
+  private requestProtectedChannelAuth(
+    channel: string,
+    socketId: string,
+  ): Promise<BroadcastingAuthResponse> {
     return this.httpClient.postWithBearer<BroadcastingAuthResponse>(
       "/v1/subscriber/broadcasting/auth",
-      { channelName: channel },
-      this.subscriberAccessToken,
+      { socketId, channelName: channel },
+      this.subscriberAccessToken!,
     );
+  }
+
+  private shouldRefreshSubscriberToken(err: unknown): boolean {
+    return errorStatus(err) === 401 && Boolean(this.subscriberRefreshToken);
+  }
+
+  private subscriberAccessTokenExpired(): boolean {
+    if (!this.subscriberAccessToken) return false;
+
+    try {
+      const claims = decodeJwtPayload(this.subscriberAccessToken);
+      if (typeof claims.exp !== "number") return false;
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      return claims.exp <= nowSeconds + SUBSCRIBER_ACCESS_REFRESH_SKEW_SECONDS;
+    } catch {
+      return false;
+    }
   }
 
   private async fetchFromAuthEndpoint(
@@ -212,8 +258,9 @@ export class AuthManager {
   private async fetchProtectedFromAuthEndpoint(
     channel: string,
     subscriberExternalId = "",
+    socketId = "",
   ): Promise<BroadcastingAuthResponse> {
-    const body: Record<string, string> = { type: "protectedSubscribe", channel };
+    const body: Record<string, string> = { type: "protectedSubscribe", channel, socketId };
     if (subscriberExternalId) body.subscriberExternalId = subscriberExternalId;
 
     const response = await fetch(this.authEndpoint!, {
@@ -243,4 +290,13 @@ export class AuthManager {
     }
     throw new Error("Auth endpoint must return auth for protected channels");
   }
+}
+
+function errorStatus(err: unknown): number | undefined {
+  if (err instanceof EmitWaveError) return err.status;
+  if (err && typeof err === "object" && "status" in err) {
+    const status = (err as { status?: unknown }).status;
+    if (typeof status === "number") return status;
+  }
+  return undefined;
 }

@@ -28,6 +28,7 @@ export class RealtimeManager {
   private presenceChannels = new Map<string, PresenceChannel>();
   private internalNames = new Map<string, string>();
   private subscriberExternalId: string | null = null;
+  private socketId: string | null = null;
   private config: RealtimeManagerConfig;
   private _state: ConnectionState = "disconnected";
 
@@ -48,6 +49,7 @@ export class RealtimeManager {
     }
 
     this.subscriberExternalId = subscriberExternalId ?? null;
+    this.socketId = null;
     this._state = "connecting";
     this.emitter.emit("connecting");
 
@@ -59,24 +61,44 @@ export class RealtimeManager {
         this.config.authManager.getConnectToken(this.subscriberExternalId ?? undefined),
     });
 
-    this.client.on("connected", () => {
-      this._state = "connected";
-      this.config.logger.log("Connected");
-      this.emitter.emit("connected");
-    });
+    const connectedPromise = new Promise<void>((resolve, reject) => {
+      let initialConnectSettled = false;
 
-    this.client.on("disconnected", () => {
-      this._state = "disconnected";
-      this.config.logger.log("Disconnected");
-      this.emitter.emit("disconnected");
-    });
+      this.client!.on("connected", (ctx) => {
+        this.socketId = ctx.client;
+        this._state = "connected";
+        this.config.logger.log("Connected", ctx.client);
+        this.emitter.emit("connected");
+        if (!initialConnectSettled) {
+          initialConnectSettled = true;
+          resolve();
+        }
+      });
 
-    this.client.on("error", (ctx) => {
-      this.config.logger.error("Connection error:", ctx.error);
-      this.emitter.emit("error", new Error(ctx.error.message));
+      this.client!.on("disconnected", (ctx) => {
+        this.socketId = null;
+        this._state = "disconnected";
+        this.config.logger.log("Disconnected");
+        this.emitter.emit("disconnected");
+        if (!initialConnectSettled) {
+          initialConnectSettled = true;
+          reject(new Error(ctx.reason || "Disconnected before connection was established"));
+        }
+      });
+
+      this.client!.on("error", (ctx) => {
+        const error = new Error(ctx.error.message);
+        this.config.logger.error("Connection error:", ctx.error);
+        this.emitter.emit("error", error);
+        if (!initialConnectSettled) {
+          initialConnectSettled = true;
+          reject(error);
+        }
+      });
     });
 
     this.client.connect();
+    await connectedPromise;
   }
 
   disconnect(): void {
@@ -98,6 +120,7 @@ export class RealtimeManager {
 
     this.client.disconnect();
     this.client = null;
+    this.socketId = null;
     this._state = "disconnected";
   }
 
@@ -211,11 +234,17 @@ export class RealtimeManager {
         "subscriberExternalId is required for protected channels. Provide it in config or connect() options.",
       );
     }
+    if (isProtected && !this.socketId) {
+      throw new Error(
+        "Protected channels require an active socket connection. Wait for the connected event before subscribing.",
+      );
+    }
 
     const authResult: ProtectedSubscribeTokenResponse = isProtected
       ? await this.config.authManager.getProtectedSubscribeToken(
           name,
           this.subscriberExternalId || "",
+          this.socketId || "",
         )
       : await this.config.authManager.getSubscribeToken(
           name,
@@ -232,19 +261,25 @@ export class RealtimeManager {
 
     return {
       subscription: this.client.newSubscription(internalName, {
-      token,
-      getToken: async () => {
-        const result = isProtected
-          ? await this.config.authManager.getProtectedSubscribeToken(
-              name,
-              this.subscriberExternalId || "",
-            )
-          : await this.config.authManager.getSubscribeToken(
-              name,
-              this.subscriberExternalId || "",
+        token,
+        getToken: async () => {
+          if (isProtected && !this.socketId) {
+            throw new Error(
+              "Protected channels require an active socket connection. Wait for the connected event before refreshing the subscription token.",
             );
-        return result.token;
-      },
+          }
+          const result = isProtected
+            ? await this.config.authManager.getProtectedSubscribeToken(
+                name,
+                this.subscriberExternalId || "",
+                this.socketId || "",
+              )
+            : await this.config.authManager.getSubscribeToken(
+                name,
+                this.subscriberExternalId || "",
+              );
+          return result.token;
+        },
       }),
       sharedSecret: authResult.sharedSecret,
     };

@@ -1,11 +1,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { AuthManager } from "../src/auth.js";
+import { EmitWaveError } from "../src/errors.js";
 import { HttpClient } from "../src/http.js";
 import { createLogger } from "../src/utils.js";
 
 describe("AuthManager", () => {
   const logger = createLogger(false);
   const originalFetch = globalThis.fetch;
+
+  function jwtWithClaims(claims: Record<string, unknown>): string {
+    return `header.${btoa(JSON.stringify(claims))}.signature`;
+  }
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -57,7 +62,7 @@ describe("AuthManager", () => {
       logger,
       subscriberAccessToken: "subscriber_access_jwt",
     });
-    const result = await auth.getPrivateSubscribeToken("private-user.user_1");
+    const result = await auth.getPrivateSubscribeToken("private-user.user_1", "", "client-123");
 
     expect(result).toStrictEqual({
       token: fakeJwt,
@@ -65,7 +70,7 @@ describe("AuthManager", () => {
     });
     expect(httpClient.postWithBearer).toHaveBeenCalledWith(
       "/v1/subscriber/broadcasting/auth",
-      { channelName: "private-user.user_1" },
+      { socketId: "client-123", channelName: "private-user.user_1" },
       "subscriber_access_jwt",
     );
   });
@@ -85,7 +90,7 @@ describe("AuthManager", () => {
       logger,
       subscriberAccessToken: "subscriber_access_jwt",
     });
-    const result = await auth.getProtectedSubscribeToken("presence-user.user_1");
+    const result = await auth.getProtectedSubscribeToken("presence-user.user_1", "", "client-123");
 
     expect(result).toStrictEqual({
       token: fakeJwt,
@@ -109,13 +114,64 @@ describe("AuthManager", () => {
       logger,
       subscriberAccessToken: "subscriber_access_jwt",
     });
-    const result = await auth.getProtectedSubscribeToken("private-encrypted-user.user_1");
+    const result = await auth.getProtectedSubscribeToken("private-encrypted-user.user_1", "", "client-123");
 
     expect(result).toStrictEqual({
       token: fakeJwt,
       channel: "app:org.app.private-encrypted-user.user_1",
       sharedSecret: "secret",
     });
+  });
+
+  it("requires subscriber access token for protected channel auth", async () => {
+    const httpClient = {
+      postWithBearer: vi.fn(),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({ httpClient, logger });
+
+    await expect(
+      auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123"),
+    ).rejects.toThrow(
+      "subscriberAccessToken is required for protected channels",
+    );
+    expect(httpClient.postWithBearer).not.toHaveBeenCalled();
+  });
+
+  it("requires socket ID for protected channel auth", async () => {
+    const httpClient = {
+      postWithBearer: vi.fn(),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "subscriber_access_jwt",
+    });
+
+    await expect(auth.getProtectedSubscribeToken("private-user.user_1", "user_1")).rejects.toThrow(
+      "socketId is required",
+    );
+    expect(httpClient.postWithBearer).not.toHaveBeenCalled();
+  });
+
+  it("uses subscriber access token set after construction", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn().mockResolvedValue({ auth: fakeJwt }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({ httpClient, logger });
+    auth.setSubscriberTokens({ accessToken: "new_access" });
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(httpClient.postWithBearer).toHaveBeenCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      "new_access",
+    );
   });
 
   it("refreshes subscriber token before protected channel auth when access token is missing", async () => {
@@ -137,7 +193,7 @@ describe("AuthManager", () => {
       logger,
       subscriberRefreshToken: "old_refresh",
     });
-    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1");
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
 
     expect(result.token).toBe(fakeJwt);
     expect(httpClient.postNoAuth).toHaveBeenCalledWith(
@@ -146,12 +202,74 @@ describe("AuthManager", () => {
     );
     expect(httpClient.postWithBearer).toHaveBeenCalledWith(
       "/v1/subscriber/broadcasting/auth",
-      { channelName: "private-user.user_1" },
+      { socketId: "client-123", channelName: "private-user.user_1" },
       "new_access",
     );
   });
 
-  it("refreshes subscriber token", async () => {
+  it("refreshes subscriber token before protected channel auth when access token is expired", async () => {
+    const authPayload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const protectedJwt = `header.${authPayload}.signature`;
+    const expiredAccessToken = jwtWithClaims({ exp: Math.floor(Date.now() / 1000) - 60 });
+    const httpClient = {
+      postNoAuth: vi.fn().mockResolvedValue({
+        accessToken: "new_access",
+        refreshToken: "new_refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+      postWithBearer: vi.fn().mockResolvedValue({ auth: protectedJwt }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: expiredAccessToken,
+      subscriberRefreshToken: "old_refresh",
+    });
+
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
+
+    expect(result.token).toBe(protectedJwt);
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/refresh",
+      { refreshToken: "old_refresh" },
+    );
+    expect(httpClient.postWithBearer).toHaveBeenCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      "new_access",
+    );
+  });
+
+  it("does not refresh subscriber token before protected channel auth when access token is still valid", async () => {
+    const authPayload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const protectedJwt = `header.${authPayload}.signature`;
+    const validAccessToken = jwtWithClaims({ exp: Math.floor(Date.now() / 1000) + 600 });
+    const httpClient = {
+      postNoAuth: vi.fn(),
+      postWithBearer: vi.fn().mockResolvedValue({ auth: protectedJwt }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: validAccessToken,
+      subscriberRefreshToken: "old_refresh",
+    });
+
+    await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
+
+    expect(httpClient.postNoAuth).not.toHaveBeenCalled();
+    expect(httpClient.postWithBearer).toHaveBeenCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      validAccessToken,
+    );
+  });
+
+  it("refreshes subscriber token manually", async () => {
     const httpClient = {
       postNoAuth: vi.fn().mockResolvedValue({
         accessToken: "new_access",
@@ -170,10 +288,131 @@ describe("AuthManager", () => {
     const result = await auth.refreshSubscriberToken();
 
     expect(result.accessToken).toBe("new_access");
+    expect(result.refreshToken).toBe("new_refresh");
     expect(httpClient.postNoAuth).toHaveBeenCalledWith(
       "/v1/subscriber/token/refresh",
       { refreshToken: "old_refresh" },
     );
+  });
+
+  it("revokes subscriber token manually", async () => {
+    const httpClient = {
+      postNoAuth: vi.fn().mockResolvedValue({ status: "revoked" }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "old_access",
+      subscriberRefreshToken: "old_refresh",
+    });
+
+    await auth.revokeSubscriberToken();
+
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/revoke",
+      { refreshToken: "old_refresh" },
+    );
+    expect(auth.hasSubscriberAccessToken()).toBe(false);
+  });
+
+  it("refreshes subscriber tokens and retries protected channel auth once on 401", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn()
+        .mockRejectedValueOnce(new EmitWaveError("Unauthorized", "UNAUTHORIZED", 401))
+        .mockResolvedValueOnce({ auth: fakeJwt }),
+      postNoAuth: vi.fn().mockResolvedValue({
+        accessToken: "next_access",
+        refreshToken: "next_refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "old_access",
+      subscriberRefreshToken: "old_refresh",
+    });
+
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/refresh",
+      { refreshToken: "old_refresh" },
+    );
+    expect(httpClient.postWithBearer).toHaveBeenNthCalledWith(
+      1,
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      "old_access",
+    );
+    expect(httpClient.postWithBearer).toHaveBeenNthCalledWith(
+      2,
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      "next_access",
+    );
+  });
+
+  it("refreshes subscriber tokens and retries protected channel auth when 401 error is not an EmitWaveError instance", async () => {
+    const payload = btoa(JSON.stringify({ channel: "app:org.app.private-user.user_1" }));
+    const fakeJwt = `header.${payload}.signature`;
+    const httpClient = {
+      postWithBearer: vi.fn()
+        .mockRejectedValueOnce({ status: 401, message: "Unauthorized" })
+        .mockResolvedValueOnce({ auth: fakeJwt }),
+      postNoAuth: vi.fn().mockResolvedValue({
+        accessToken: "next_access",
+        refreshToken: "next_refresh",
+        tokenType: "Bearer",
+        expiresIn: 3600,
+        refreshExpiresIn: 2592000,
+      }),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "old_access",
+      subscriberRefreshToken: "old_refresh",
+    });
+
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
+
+    expect(result.token).toBe(fakeJwt);
+    expect(httpClient.postNoAuth).toHaveBeenCalledWith(
+      "/v1/subscriber/token/refresh",
+      { refreshToken: "old_refresh" },
+    );
+    expect(httpClient.postWithBearer).toHaveBeenLastCalledWith(
+      "/v1/subscriber/broadcasting/auth",
+      { socketId: "client-123", channelName: "private-user.user_1" },
+      "next_access",
+    );
+  });
+
+  it("does not refresh protected channel auth failures without a refresh token", async () => {
+    const httpClient = {
+      postWithBearer: vi.fn().mockRejectedValue(new EmitWaveError("Unauthorized", "UNAUTHORIZED", 401)),
+      postNoAuth: vi.fn(),
+    } as unknown as HttpClient;
+
+    const auth = new AuthManager({
+      httpClient,
+      logger,
+      subscriberAccessToken: "old_access",
+    });
+
+    await expect(
+      auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123"),
+    ).rejects.toThrow("Unauthorized");
+    expect(httpClient.postNoAuth).not.toHaveBeenCalled();
   });
 
   it("uses authEndpoint when provided", async () => {
@@ -255,7 +494,7 @@ describe("AuthManager", () => {
       subscriberAccessToken: "subscriber_access_jwt",
     });
 
-    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1");
+    const result = await auth.getProtectedSubscribeToken("private-user.user_1", "user_1", "client-123");
 
     expect(result.token).toBe(fakeJwt);
     expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -265,6 +504,7 @@ describe("AuthManager", () => {
         body: JSON.stringify({
           type: "protectedSubscribe",
           channel: "private-user.user_1",
+          socketId: "client-123",
           subscriberExternalId: "user_1",
         }),
       }),
